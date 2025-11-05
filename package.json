@@ -1,0 +1,47 @@
+{
+  "name": "audio-sort",
+  "version": "0.1.0",
+  "description": "Electron audio sorting application with fuzzy search, tagging, and library management for WAV files.",
+  "main": "dist/main/main/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\" \"npm:dev:electron\"",
+    "dev:renderer": "vite --config vite.config.mjs",
+    "dev:main": "tsc -p tsconfig.main.json --watch --preserveWatchOutput",
+    "dev:electron": "cross-env NODE_ENV=development VITE_DEV_SERVER_URL=http://localhost:5173 node ./scripts/start-electron.mjs",
+    "build": "npm run build:renderer && npm run build:main",
+    "build:renderer": "vite build --config vite.config.mjs",
+    "build:main": "tsc -p tsconfig.main.json",
+    "lint": "tsc --noEmit",
+    "start": "cross-env NODE_ENV=production electron ./dist/main/main/index.js",
+    "test": "node --import tsx --test src/test/DatabaseService.test.ts src/test/TagService.test.ts src/test/LibraryService.test.ts src/test/SearchService.test.ts",
+    "test:tag": "node --import tsx --test src/test/TagService.test.ts",
+    "test:library": "node --import tsx --test src/test/LibraryService.test.ts",
+    "test:database": "node --import tsx --test src/test/DatabaseService.test.ts",
+    "test:search": "node --import tsx --test src/test/SearchService.test.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.5",
+    "csv-parse": "^5.5.5",
+    "fast-glob": "^3.3.2",
+    "fuse.js": "^6.6.2",
+    "music-metadata": "^10.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "wavefile": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^20.12.7",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^29.4.4",
+    "tree-kill": "^1.2.2",
+    "tsx": "^4.15.7",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.6"
+  }
+}
