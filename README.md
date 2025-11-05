@@ -62,7 +62,7 @@ Download the latest `AudioSort Setup.exe` from the [Releases](../../releases) pa
 #### Setup
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/litruv/AudioSort/
 cd AudioSort
 
 # Install dependencies
