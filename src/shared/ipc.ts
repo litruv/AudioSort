@@ -45,7 +45,7 @@ export interface RendererApi {
   /** Moves a file to another subdirectory under the library root. */
   moveFile(fileId: number, targetRelativeDirectory: string): Promise<import('./models').AudioFileSummary>;
   /** Automatically organizes a file based on its categories. */
-  organizeFile(fileId: number, metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }): Promise<import('./models').AudioFileSummary>;
+  organizeFile(fileId: number, metadata: { customName?: string | null; author?: string | null; rating?: number }): Promise<import('./models').AudioFileSummary>;
   /** Updates the custom name for a file. */
   updateCustomName(fileId: number, customName: string | null): Promise<import('./models').AudioFileSummary>;
   /** Opens the file's containing folder in the system file explorer. */
@@ -63,11 +63,11 @@ export interface RendererApi {
   /** Runs fuzzy search returning ranked results. */
   search(query: string): Promise<import('./models').AudioFileSummary[]>;
   /** Reads embedded metadata from a WAV file. */
-  readFileMetadata(fileId: number): Promise<{ author?: string; copyright?: string; title?: string; rating?: number }>;
+  readFileMetadata(fileId: number): Promise<{ author?: string; title?: string; rating?: number }>;
   /** Lists distinct metadata values gathered from the library for quick suggestions. */
-  listMetadataSuggestions(): Promise<{ authors: string[]; copyrights: string[] }>;
-  /** Updates metadata (author, copyright, rating) without organizing the file. */
-  updateFileMetadata(fileId: number, metadata: { author?: string | null; copyright?: string | null; rating?: number }): Promise<void>;
+  listMetadataSuggestions(): Promise<{ authors: string[] }>;
+  /** Updates metadata (author, rating) without organizing the file. */
+  updateFileMetadata(fileId: number, metadata: { author?: string | null; rating?: number }): Promise<void>;
   /** Listens for menu actions from the main process. Returns a cleanup function. */
   onMenuAction(channel: string, callback: () => void): () => void;
 }

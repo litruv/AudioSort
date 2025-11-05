@@ -8,8 +8,8 @@ export interface MultiFileEditorProps {
   categories: CategoryRecord[];
   onUpdateTags(fileId: number, data: { tags: string[]; categories: string[] }): Promise<void>;
   onUpdateCustomName(fileId: number, customName: string | null): Promise<void>;
-  onOrganize(fileId: number, metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }): Promise<void>;
-  onUpdateMetadata(fileId: number, metadata: { author?: string | null; copyright?: string | null; rating?: number }): Promise<void>;
+  onOrganize(fileId: number, metadata: { customName?: string | null; author?: string | null; rating?: number }): Promise<void>;
+  onUpdateMetadata(fileId: number, metadata: { author?: string | null; rating?: number }): Promise<void>;
   metadataSuggestionsVersion: number;
 }
 
@@ -19,9 +19,8 @@ export interface MultiFileEditorProps {
 export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCustomName, onOrganize, onUpdateMetadata, metadataSuggestionsVersion }: MultiFileEditorProps): JSX.Element {
   const [sharedCustomName, setSharedCustomName] = useState('');
   const [sharedAuthor, setSharedAuthor] = useState('');
-  const [sharedCopyright, setSharedCopyright] = useState('');
   const [sharedRating, setSharedRating] = useState(0);
-  const [suggestions, setSuggestions] = useState<{ authors: string[]; copyrights: string[] }>({ authors: [], copyrights: [] });
+  const [suggestions, setSuggestions] = useState<{ authors: string[] }>({ authors: [] });
   const [isTagSectionExpanded, setIsTagSectionExpanded] = useState(true);
 
   // Compute aggregated tags and categories for TagEditor
@@ -53,7 +52,7 @@ export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCusto
 
   const listRef = useRef<HTMLDivElement>(null);
 
-  type SuggestionKey = 'authors' | 'copyrights';
+  type SuggestionKey = 'authors';
 
   const appendSuggestion = useCallback((value: string, key: SuggestionKey) => {
     const trimmed = value.trim();
@@ -84,21 +83,9 @@ export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCusto
     return base.filter((entry) => entry.toLowerCase().includes(query)).slice(0, 5);
   }, [sharedAuthor, suggestions.authors]);
 
-  const filteredCopyrightSuggestions = useMemo(() => {
-    if (suggestions.copyrights.length === 0) {
-      return [] as string[];
-    }
-    const query = sharedCopyright.trim().toLowerCase();
-    const base = suggestions.copyrights.filter((entry) => entry.toLowerCase() !== query);
-    if (query.length === 0) {
-      return base.slice(0, 5);
-    }
-    return base.filter((entry) => entry.toLowerCase().includes(query)).slice(0, 5);
-  }, [sharedCopyright, suggestions.copyrights]);
-
   useEffect(() => {
     let cancelled = false;
-    setSuggestions({ authors: [], copyrights: [] });
+    setSuggestions({ authors: [] });
     void (async () => {
       try {
         const result = await window.api.listMetadataSuggestions();
@@ -106,8 +93,7 @@ export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCusto
           return;
         }
         setSuggestions({
-          authors: result.authors,
-          copyrights: result.copyrights
+          authors: result.authors
         });
       } catch (error) {
         if (!cancelled) {
@@ -185,37 +171,6 @@ export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCusto
       }
     } catch (error) {
       console.error('Failed to update author:', error);
-    }
-  };
-
-  const handleSharedCopyrightBlur = async () => {
-    const normalized = sharedCopyright.trim();
-    
-    if (normalized.length === 0) return;
-    
-    try {
-      let failureCount = 0;
-      for (const file of files) {
-        try {
-          if (file.categories.length > 0) {
-            await onOrganize(file.id, { copyright: normalized });
-          } else {
-            await onUpdateMetadata(file.id, { copyright: normalized });
-          }
-        } catch (error) {
-          failureCount += 1;
-          console.error(`Failed to update copyright for file ${file.id} (${file.fileName}):`, error);
-        }
-      }
-      if (failureCount > 0) {
-        console.error(`${failureCount} file(s) failed to update copyright`);
-      }
-      
-      if (normalized.length > 0) {
-        appendSuggestion(normalized, 'copyrights');
-      }
-    } catch (error) {
-      console.error('Failed to update copyright:', error);
     }
   };
 
@@ -317,39 +272,6 @@ export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCusto
                       onClick={() => {
                         setSharedAuthor(option);
                         void handleSharedAuthorBlur();
-                      }}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </label>
-            <label>
-              <span>Copyright</span>
-              <input
-                type="text"
-                value={sharedCopyright}
-                onChange={(e) => setSharedCopyright(e.target.value)}
-                onBlur={handleSharedCopyrightBlur}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.currentTarget.blur();
-                  }
-                }}
-                placeholder="Copyright information"
-              />
-              {filteredCopyrightSuggestions.length > 0 && (
-                <div className="metadata-suggestion-list" role="listbox" aria-label="Copyright suggestions">
-                  {filteredCopyrightSuggestions.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      className="metadata-suggestion"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setSharedCopyright(option);
-                        void handleSharedCopyrightBlur();
                       }}
                     >
                       {option}

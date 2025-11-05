@@ -29,7 +29,7 @@ export class LibraryService {
   private readonly metadataFailures = new Set<string>();
   private readonly checksumFailures = new Set<string>();
   private readonly organization: OrganizationService;
-  private metadataSuggestionCache: { authors: Set<string>; copyrights: Set<string> } | null = null;
+  private metadataSuggestionCache: { authors: Set<string> } | null = null;
   private readonly waveformPreviewCache = new Map<number, { modifiedAt: number; pointCount: number; samples: number[]; rms: number }>();
 
   public constructor(
@@ -378,7 +378,6 @@ export class LibraryService {
       return this.organizeFile(payload.fileId, {
         customName: updated.customName ?? undefined,
         author: metadataSnapshot.author?.trim() || undefined,
-        copyright: metadataSnapshot.copyright?.trim() || undefined,
         rating: metadataSnapshot.rating ?? undefined
       });
     }
@@ -435,7 +434,7 @@ export class LibraryService {
    */
   public async organizeFile(
     fileId: number,
-    metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }
+    metadata: { customName?: string | null; author?: string | null; rating?: number }
   ): Promise<AudioFileSummary> {
     const record = this.database.getFileById(fileId);
     const category = this.organization.getPrimaryCategory(record);
@@ -503,9 +502,7 @@ export class LibraryService {
       
       // Merge with new metadata (only update fields that are provided)
       const requestedAuthor = this.normaliseMetadataInput(metadata.author);
-      const requestedCopyright = this.normaliseMetadataInput(metadata.copyright);
       const mergedAuthor = requestedAuthor !== undefined ? requestedAuthor : existing.author ?? null;
-      const mergedCopyright = requestedCopyright !== undefined ? requestedCopyright : existing.copyright ?? null;
       const mergedRating = metadata.rating !== undefined ? metadata.rating : existing.rating;
       
       this.tagService.writeMetadataOnly(updatedRecord.absolutePath, {
@@ -513,16 +510,12 @@ export class LibraryService {
         categories: updatedRecord.categories,
         title: effectiveCustomName,
         author: mergedAuthor,
-        copyright: mergedCopyright,
         rating: mergedRating
       });
 
       // Update suggestions cache for any metadata that was provided
       if (typeof mergedAuthor === 'string' && mergedAuthor.length > 0) {
-        this.updateMetadataSuggestionsCache(mergedAuthor, undefined);
-      }
-      if (typeof mergedCopyright === 'string' && mergedCopyright.length > 0) {
-        this.updateMetadataSuggestionsCache(undefined, mergedCopyright);
+        this.updateMetadataSuggestionsCache(mergedAuthor);
       }
 
       this.resetMetadataSuggestionsCache();
@@ -602,9 +595,7 @@ export class LibraryService {
     
     // Merge with new metadata (only update fields that are provided)
   const movedAuthor = this.normaliseMetadataInput(metadata.author);
-  const movedCopyright = this.normaliseMetadataInput(metadata.copyright);
   const mergedAuthor = movedAuthor !== undefined ? movedAuthor : existing.author ?? null;
-  const mergedCopyright = movedCopyright !== undefined ? movedCopyright : existing.copyright ?? null;
     const mergedRating = metadata.rating !== undefined ? metadata.rating : existing.rating;
     
     // Write tags, categories, and additional metadata to the organized file
@@ -613,16 +604,12 @@ export class LibraryService {
       categories: updated.categories,
       title: effectiveCustomName,
       author: mergedAuthor,
-      copyright: mergedCopyright,
       rating: mergedRating
     });
 
     // Update suggestions cache for any metadata that was provided
     if (typeof mergedAuthor === 'string' && mergedAuthor.length > 0) {
-      this.updateMetadataSuggestionsCache(mergedAuthor, undefined);
-    }
-    if (typeof mergedCopyright === 'string' && mergedCopyright.length > 0) {
-      this.updateMetadataSuggestionsCache(undefined, mergedCopyright);
+      this.updateMetadataSuggestionsCache(mergedAuthor);
     }
 
     this.resetMetadataSuggestionsCache();
@@ -666,20 +653,20 @@ export class LibraryService {
   }
 
   /**
-   * Reads embedded metadata from a WAV file and returns author, copyright, title, and rating.
+   * Reads embedded metadata from a WAV file and returns author, title, and rating.
    */
-  public async readFileMetadata(fileId: number): Promise<{ author?: string; copyright?: string; title?: string; rating?: number }> {
+  public async readFileMetadata(fileId: number): Promise<{ author?: string; title?: string; rating?: number }> {
     const record = this.database.getFileById(fileId);
     const metadata = this.tagService.readMetadata(record.absolutePath);
-    this.updateMetadataSuggestionsCache(metadata.author, metadata.copyright);
+    this.updateMetadataSuggestionsCache(metadata.author);
     return metadata;
   }
 
   /**
-   * Updates metadata (author, copyright, rating) without organizing the file.
+   * Updates metadata (author, rating) without organizing the file.
    * Only writes to the WAV INFO chunk, doesn't move or rename the file.
    */
-  public async updateFileMetadata(fileId: number, metadata: { author?: string | null; copyright?: string | null; rating?: number }): Promise<void> {
+  public async updateFileMetadata(fileId: number, metadata: { author?: string | null; rating?: number }): Promise<void> {
     const record = this.database.getFileById(fileId);
     
     // Read existing metadata from the WAV file
@@ -687,13 +674,11 @@ export class LibraryService {
     
     // Merge with new metadata (only update fields that are provided)
     const requestedAuthor = this.normaliseMetadataInput(metadata.author);
-    const requestedCopyright = this.normaliseMetadataInput(metadata.copyright);
     const mergedMetadata = {
       tags: record.tags,
       categories: record.categories,
       title: record.customName ?? existing.title,
       author: requestedAuthor !== undefined ? requestedAuthor : existing.author ?? null,
-      copyright: requestedCopyright !== undefined ? requestedCopyright : existing.copyright ?? null,
       rating: metadata.rating !== undefined ? metadata.rating : existing.rating
     };
     
@@ -702,10 +687,7 @@ export class LibraryService {
 
     // Update suggestions cache
     if (typeof mergedMetadata.author === 'string' && mergedMetadata.author.length > 0) {
-      this.updateMetadataSuggestionsCache(mergedMetadata.author, undefined);
-    }
-    if (typeof mergedMetadata.copyright === 'string' && mergedMetadata.copyright.length > 0) {
-      this.updateMetadataSuggestionsCache(undefined, mergedMetadata.copyright);
+      this.updateMetadataSuggestionsCache(mergedMetadata.author);
     }
 
     this.waveformPreviewCache.delete(fileId);
@@ -715,10 +697,9 @@ export class LibraryService {
   /**
    * Returns distinct metadata suggestions aggregated from the library.
    */
-  public async listMetadataSuggestions(): Promise<{ authors: string[]; copyrights: string[] }> {
+  public async listMetadataSuggestions(): Promise<{ authors: string[] }> {
     if (!this.metadataSuggestionCache) {
       const authors = new Set<string>();
-      const copyrights = new Set<string>();
       const files = this.database.listFiles();
 
       for (const file of files) {
@@ -726,9 +707,6 @@ export class LibraryService {
           const metadata = this.tagService.readMetadata(file.absolutePath);
           if (metadata.author) {
             this.addSuggestionValue(authors, metadata.author);
-          }
-          if (metadata.copyright) {
-            this.addSuggestionValue(copyrights, metadata.copyright);
           }
         } catch (error) {
           if (!this.metadataFailures.has(file.absolutePath)) {
@@ -739,12 +717,11 @@ export class LibraryService {
         }
       }
 
-      this.metadataSuggestionCache = { authors, copyrights };
+      this.metadataSuggestionCache = { authors };
     }
 
     return {
-      authors: Array.from(this.metadataSuggestionCache.authors).sort((a, b) => a.localeCompare(b)),
-      copyrights: Array.from(this.metadataSuggestionCache.copyrights).sort((a, b) => a.localeCompare(b))
+      authors: Array.from(this.metadataSuggestionCache.authors).sort((a, b) => a.localeCompare(b))
     };
   }
 
@@ -769,15 +746,12 @@ export class LibraryService {
     return trimmed.length > 0 ? trimmed : null;
   }
 
-  private updateMetadataSuggestionsCache(author?: string | null, copyright?: string | null): void {
+  private updateMetadataSuggestionsCache(author?: string | null): void {
     if (!this.metadataSuggestionCache) {
       return;
     }
     if (author) {
       this.addSuggestionValue(this.metadataSuggestionCache.authors, author);
-    }
-    if (copyright) {
-      this.addSuggestionValue(this.metadataSuggestionCache.copyrights, copyright);
     }
   }
 

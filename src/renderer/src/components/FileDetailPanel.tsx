@@ -10,8 +10,8 @@ export interface FileDetailPanelProps {
   categories: CategoryRecord[];
   onRename(newName: string): Promise<void>;
   onMove(targetRelativeDirectory: string): Promise<void>;
-  /** Organizes a file with optional metadata fields (customName, author, copyright, rating 1-5). */
-  onOrganize(metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }): Promise<void>;
+  /** Organizes a file with optional metadata fields (customName, author, rating 1-5). */
+  onOrganize(metadata: { customName?: string | null; author?: string | null; rating?: number }): Promise<void>;
   onUpdateTags(data: { tags: string[]; categories: string[] }): Promise<void>;
   onUpdateCustomName(customName: string | null): Promise<void>;
   metadataSuggestionsVersion: number;
@@ -29,9 +29,8 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
   const [busy, setBusy] = useState(false);
   const [isTagSectionExpanded, setIsTagSectionExpanded] = useState(true);
   const [suggestions, setSuggestions] = useState<{ authors: string[] }>({ authors: [] });
-  const initialMetadataRef = useRef<{ author: string; copyright: string; rating: number; customName: string }>({
+  const initialMetadataRef = useRef<{ author: string; rating: number; customName: string }>({
     author: '',
-    copyright: '',
     rating: 0,
     customName: ''
   });
@@ -94,7 +93,7 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
       setAuthorDraft('');
       setRatingDraft(0);
       setIsEditingCustomName(false);
-      initialMetadataRef.current = { author: '', copyright: '', rating: 0, customName: '' };
+      initialMetadataRef.current = { author: '', rating: 0, customName: '' };
       return;
     }
 
@@ -102,7 +101,7 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
     setCustomNameDraft(file.customName ?? '');
     setIsEditingCustomName(false);
     const baseCustomName = (file.customName ?? '').trim();
-    initialMetadataRef.current = { author: '', copyright: '', rating: 0, customName: baseCustomName };
+    initialMetadataRef.current = { author: '', rating: 0, customName: baseCustomName };
 
     void (async () => {
       try {
@@ -118,7 +117,6 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
         setRatingDraft(ratingValue);
         initialMetadataRef.current = {
           author: authorValue,
-          copyright: '',
           rating: ratingValue,
           customName: customNameValue
         };
@@ -129,7 +127,7 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
         console.error('Failed to read file metadata:', error);
         setAuthorDraft('');
         setRatingDraft(0);
-        initialMetadataRef.current = { author: '', copyright: '', rating: 0, customName: baseCustomName };
+        initialMetadataRef.current = { author: '', rating: 0, customName: baseCustomName };
       }
     })();
   }, [appendSuggestion, file?.id]);
@@ -206,7 +204,6 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
     const trimmedCustomName = (nextCustomNameRaw ?? '').toString().trim();
     const comparisonState = {
       author: trimmedAuthor,
-      copyright: '',
       rating: nextRatingValue,
       customName: trimmedCustomName
     };
@@ -215,7 +212,6 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
     if (
       previous &&
       previous.author === comparisonState.author &&
-      previous.copyright === comparisonState.copyright &&
       previous.rating === comparisonState.rating &&
       previous.customName === comparisonState.customName
     ) {

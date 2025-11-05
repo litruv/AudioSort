@@ -42,7 +42,6 @@ export class TagService {
    */
   public readMetadata(filePath: string): {
     author?: string;
-    copyright?: string;
     title?: string;
     rating?: number;
   } {
@@ -58,7 +57,6 @@ export class TagService {
 
       return {
         author: tags.IART?.trim() || undefined,
-        copyright: tags.ICOP?.trim() || undefined,
         title: tags.INAM?.trim() || undefined,
         rating
       };
@@ -79,7 +77,6 @@ export class TagService {
       categories: string[];
   title?: string | null;
   author?: string | null;
-  copyright?: string | null;
       rating?: number;
     }
   ): void {
@@ -96,7 +93,6 @@ export class TagService {
       categories: string[];
   title?: string | null;
   author?: string | null;
-  copyright?: string | null;
       rating?: number;
     }
   ): void {
@@ -123,7 +119,6 @@ export class TagService {
         IGNR: null,
         INAM: metadata.title?.trim()?.length ? metadata.title.trim() : null,
         IART: metadata.author?.trim()?.length ? metadata.author.trim() : null,
-        ICOP: metadata.copyright?.trim()?.length ? metadata.copyright.trim() : null,
         IRTD: metadata.rating && metadata.rating > 0 ? String(metadata.rating * 2) : null,
         ISFT: 'AudioSort'
       };
@@ -138,7 +133,6 @@ export class TagService {
         categories: metadata.categories.join(', '),
         title: metadata.title,
         author: metadata.author,
-        copyright: metadata.copyright,
         rating: metadata.rating
       });
     } catch (error) {

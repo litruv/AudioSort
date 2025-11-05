@@ -8,11 +8,10 @@ import {
   type SyntheticEvent
 } from 'react';
 
-type SuggestionType = 'author' | 'copyright';
+type SuggestionType = 'author';
 
 interface MetadataSuggestionPayload {
   authors: string[];
-  copyrights: string[];
 }
 
 export interface SearchBarProps {
@@ -30,7 +29,7 @@ export interface SearchBarProps {
 export function SearchBar({ value, onChange, onRescan, onFindDuplicates, onOpenSettings, metadataSuggestionsVersion }: SearchBarProps): JSX.Element {
   const [draft, setDraft] = useState(value);
   const [caretIndex, setCaretIndex] = useState<number | null>(null);
-  const [suggestions, setSuggestions] = useState<MetadataSuggestionPayload>({ authors: [], copyrights: [] });
+  const [suggestions, setSuggestions] = useState<MetadataSuggestionPayload>({ authors: [] });
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [rescanBusy, setRescanBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -44,8 +43,7 @@ export function SearchBar({ value, onChange, onRescan, onFindDuplicates, onOpenS
     try {
       const result = await window.api.listMetadataSuggestions();
       setSuggestions({
-        authors: result.authors,
-        copyrights: result.copyrights
+        authors: result.authors
       });
     } catch (error) {
       console.error('Failed to load search suggestions', error);
@@ -55,7 +53,7 @@ export function SearchBar({ value, onChange, onRescan, onFindDuplicates, onOpenS
   }, []);
 
   useEffect(() => {
-    setSuggestions({ authors: [], copyrights: [] });
+    setSuggestions({ authors: [] });
     void refreshSuggestions();
   }, [refreshSuggestions, metadataSuggestionsVersion]);
 
@@ -65,7 +63,7 @@ export function SearchBar({ value, onChange, onRescan, onFindDuplicates, onOpenS
   }, [caretIndex, draft]);
 
   const activeToken = useMemo(() => {
-    const match = analysisTarget.match(/(author|copyright):([^\s]*)$/i);
+    const match = analysisTarget.match(/(author):([^\s]*)$/i);
     if (!match) {
       return null;
     }
@@ -80,7 +78,7 @@ export function SearchBar({ value, onChange, onRescan, onFindDuplicates, onOpenS
     if (!activeToken) {
       return [] as string[];
     }
-    const pool = activeToken.type === 'author' ? suggestions.authors : suggestions.copyrights;
+    const pool = suggestions.authors;
     const trimmedTerm = activeToken.term.trim();
     if (trimmedTerm.length === 0) {
       return pool.slice(0, 6);

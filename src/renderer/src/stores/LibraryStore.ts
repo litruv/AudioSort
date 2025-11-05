@@ -297,7 +297,7 @@ export class LibraryStore extends EventTarget {
   /**
    * Automatically organizes a file based on its categories.
    */
-  public async organizeFile(fileId: number, metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }): Promise<AudioFileSummary> {
+  public async organizeFile(fileId: number, metadata: { customName?: string | null; author?: string | null; rating?: number }): Promise<AudioFileSummary> {
     const currentSelection = this.snapshot.selectedFileId;
     const currentFocused = this.snapshot.focusedFile;
     const updated = await window.api.organizeFile(fileId, metadata);
@@ -335,9 +335,9 @@ export class LibraryStore extends EventTarget {
   }
 
   /**
-   * Updates metadata (author, copyright, rating) for a file without organizing it.
+   * Updates metadata (author, rating) for a file without organizing it.
    */
-  public async updateFileMetadata(fileId: number, metadata: { author?: string | null; copyright?: string | null; rating?: number }): Promise<void> {
+  public async updateFileMetadata(fileId: number, metadata: { author?: string | null; rating?: number }): Promise<void> {
     await window.api.updateFileMetadata(fileId, metadata);
     
     // Refresh the file list to get updated metadata
