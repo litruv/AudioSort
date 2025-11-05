@@ -8,14 +8,13 @@ import { TagService } from './TagService';
  */
 interface CachedMetadata {
   author?: string;
-  copyright?: string;
 }
 
 /**
  * Represents a structured filter derived from the freeform query.
  */
 interface AdvancedFilter {
-  field: 'author' | 'copyright';
+  field: 'author';
   value: string;
 }
 
@@ -119,7 +118,7 @@ export class SearchService {
   }
 
   /**
-   * Pulls out author/copyright filters and returns the remaining free text query.
+   * Pulls out author filters and returns the remaining free text query.
    */
   private extractAdvancedFilters(query: string): { filters: AdvancedFilter[]; remainingQuery: string } {
     const tokens = query.split(/\s+/);
@@ -132,13 +131,6 @@ export class SearchService {
         const value = token.slice('author:'.length).trim();
         if (value.length > 0) {
           filters.push({ field: 'author', value: value.toLowerCase() });
-        }
-        continue;
-      }
-      if (lower.startsWith('copyright:')) {
-        const value = token.slice('copyright:'.length).trim();
-        if (value.length > 0) {
-          filters.push({ field: 'copyright', value: value.toLowerCase() });
         }
         continue;
       }
@@ -161,7 +153,7 @@ export class SearchService {
 
     const metadata = this.getCachedMetadata(file);
     return filters.every((filter) => {
-      const source = filter.field === 'author' ? metadata.author : metadata.copyright;
+      const source = metadata.author;
       if (!source) {
         return false;
       }
@@ -180,8 +172,7 @@ export class SearchService {
 
     const metadata = this.tagService.readMetadata(file.absolutePath);
     const normalized: CachedMetadata = {
-      author: metadata.author?.trim() || undefined,
-      copyright: metadata.copyright?.trim() || undefined
+      author: metadata.author?.trim() || undefined
     };
     this.metadataCache.set(file.id, normalized);
     return normalized;
