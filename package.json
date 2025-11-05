@@ -14,6 +14,9 @@
     "build:main": "tsc -p tsconfig.main.json",
     "lint": "tsc --noEmit",
     "start": "cross-env NODE_ENV=production electron ./dist/main/main/index.js",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
     "test": "node --import tsx --test src/test/DatabaseService.test.ts src/test/TagService.test.ts src/test/LibraryService.test.ts src/test/SearchService.test.ts",
     "test:tag": "node --import tsx --test src/test/TagService.test.ts",
     "test:library": "node --import tsx --test src/test/LibraryService.test.ts",
@@ -39,9 +42,35 @@
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "^29.4.4",
+    "electron-builder": "^26.0.12",
     "tree-kill": "^1.2.2",
     "tsx": "^4.15.7",
     "typescript": "^5.3.3",
     "vite": "^5.1.6"
+  },
+  "build": {
+    "appId": "com.audiosort.app",
+    "productName": "AudioSort",
+    "files": [
+      "dist/**/*",
+      "UCS.csv"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "extraResources": [
+      {
+        "from": "UCS.csv",
+        "to": "UCS.csv"
+      }
+    ]
   }
 }

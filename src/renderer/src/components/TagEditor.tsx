@@ -55,17 +55,13 @@ export function TagEditor({ tags, categories, availableCategories, onSave, showH
     setTagDraft(tags.join(', '));
     setSelectedCategories(new Set(categories));
     
-    // Sync collapsed state from module state when file changes (but not on first render)
     if (!isFirstRender.current) {
       const moduleState = getCollapsedGroups();
-      console.log('TagEditor syncing collapsed state from module:', Array.from(moduleState!));
       setCollapsedGroups(new Set(moduleState!));
     } else {
       isFirstRender.current = false;
     }
   }, [tags, categories]);
-
-  // No need for this effect anymore - categories don't change dynamically
 
   const { groupedCategories, filteredResults } = useMemo(() => {
     const filter = categoryFilter.trim().toLowerCase();
@@ -139,7 +135,6 @@ export function TagEditor({ tags, categories, availableCategories, onSave, showH
       moduleState.add(groupName);
     }
     setModuleCollapsedGroups(moduleState);
-    console.log('TagEditor toggleGroup:', groupName, 'collapsed:', next.has(groupName), 'module state:', Array.from(moduleState));
     setCollapsedGroups(next);
   };
 
@@ -192,7 +187,7 @@ export function TagEditor({ tags, categories, availableCategories, onSave, showH
 
   return (
     <section className="tag-editor">
-  {showHeading && <h2>Tags</h2>}
+      {showHeading && <h2>Tags</h2>}
       <textarea
         value={tagDraft}
         onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setTagDraft(event.target.value)}

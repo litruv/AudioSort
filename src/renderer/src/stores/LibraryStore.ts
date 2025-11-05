@@ -36,7 +36,7 @@ export class LibraryStore extends EventTarget {
     visibleFiles: [],
     selectedFileId: null,
     selectedFileIds: new Set(),
-  focusedFile: null,
+    focusedFile: null,
     categories: [],
     settings: { libraryPath: null },
     searchQuery: '',

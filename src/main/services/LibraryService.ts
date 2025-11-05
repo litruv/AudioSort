@@ -84,12 +84,7 @@ export class LibraryService {
     this.resetMetadataSuggestionsCache();
     this.waveformPreviewCache.clear();
     
-    // Clean up any orphaned temp files before scanning
     const cleanedTempFiles = await this.cleanupTempFiles();
-    if (cleanedTempFiles > 0) {
-      console.log(`Cleaned up ${cleanedTempFiles} orphaned temp files`);
-    }
-    
     const libraryRoot = this.settings.ensureLibraryPath();
     const existing = this.database.listFiles();
     const existingByPath = new Map(existing.map((file) => [file.absolutePath, file] as const));
@@ -213,18 +208,13 @@ export class LibraryService {
           // Check if the intended destination exists
           try {
             await fs.access(intendedPath);
-            // Final file exists, safe to delete temp
             await fs.unlink(tempFile);
-            console.log(`Cleaned up temp file (final exists): ${tempFile}`);
             cleanedCount++;
           } catch {
-            // Final file doesn't exist, rename temp to final
             await fs.rename(tempFile, intendedPath);
-            console.log(`Recovered temp file: ${tempFile} -> ${intendedPath}`);
             cleanedCount++;
           }
         } else {
-          // Unknown temp file pattern, log but don't delete
           console.warn(`Found temp file with unknown pattern: ${tempFile}`);
         }
       } catch (error) {
@@ -448,8 +438,6 @@ export class LibraryService {
     metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }
   ): Promise<AudioFileSummary> {
     const record = this.database.getFileById(fileId);
-    console.log(`[organizeFile] START: fileId=${fileId}, fileName=${record.fileName}, customName=${metadata.customName}`);
-    
     const category = this.organization.getPrimaryCategory(record);
     if (!category) {
       throw new Error('Cannot organize file without category assignment');
@@ -465,9 +453,6 @@ export class LibraryService {
       .listConflictingFiles(folderPath, baseName)
       .filter((file) => file.id !== record.id);
     const requireNumbering = !effectiveCustomName || conflicts.length > 0;
-    
-    console.log(`[organizeFile] fileId=${fileId}, baseName=${baseName}, conflicts=${conflicts.length}, requireNumbering=${requireNumbering}`);
-
     const targetDirectory = path.resolve(libraryRoot, folderPath);
     this.assertWithinLibrary(libraryRoot, targetDirectory);
     const currentFolder = this.normalizeRelativePath(path.dirname(record.relativePath));
@@ -553,23 +538,16 @@ export class LibraryService {
         const conflictFolder = this.normalizeRelativePath(path.dirname(conflict.relativePath));
         const isInTargetFolder = conflictFolder === targetFolderNormalized;
         const hasNumberedName = pattern.test(conflict.fileName);
-        console.log(`[organizeFile] Conflict fileId=${conflict.id}, fileName=${conflict.fileName}, isInTarget=${isInTargetFolder}, hasNumber=${hasNumberedName}`);
-        // Only renumber if it's not in the target folder OR doesn't have a numbered name
         return !isInTargetFolder || !hasNumberedName;
       });
-      
-      console.log(`[organizeFile] fileId=${fileId}, conflictsNeedingRenumber=${conflictsNeedingRenumber.length}/${conflicts.length}`);
       
       if (conflictsNeedingRenumber.length > 0) {
         await this.renumberConflictingFiles(conflictsNeedingRenumber, folderPath, baseName, libraryRoot);
         
-        // After renumbering conflicts, recalculate the target filename for this file
-        // because the available numbers have changed
         const nextIndex = await this.findNextAvailableNumberWithFilesystemCheck(folderPath, baseName, targetDirectory);
         targetFileName = `${baseName}_${this.organization.formatSequenceNumber(nextIndex)}.wav`;
         targetPath = path.join(targetDirectory, targetFileName);
         targetRelativePath = this.toLibraryRelativePath(folderPath, targetFileName);
-        console.log(`[organizeFile] After renumbering, recalculated target for fileId=${fileId}: ${targetFileName}`);
       }
     }
 
@@ -590,26 +568,17 @@ export class LibraryService {
     } catch (error: unknown) {
       // Check if this is a UNIQUE constraint error on absolute_path
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorString = JSON.stringify(error);
       
       if (errorMessage.includes('UNIQUE constraint') && errorMessage.includes('absolute_path')) {
-        console.log(`[LibraryService] Caught UNIQUE constraint error for ${targetPath}, retrying with numbering...`);
-        
-        // Rollback filesystem change
         await fs.rename(targetPath, record.absolutePath);
         
-        // Find next available number and retry
         const safeIndex = await this.findNextAvailableNumberWithFilesystemCheck(folderPath, baseName, targetDirectory);
         targetFileName = `${baseName}_${this.organization.formatSequenceNumber(safeIndex)}.wav`;
         targetPath = path.join(targetDirectory, targetFileName);
         targetRelativePath = this.toLibraryRelativePath(folderPath, targetFileName);
         
-        console.log(`[LibraryService] Retrying with numbered filename: ${targetFileName}`);
-        
-        // Retry filesystem operation
         await fs.rename(record.absolutePath, targetPath);
         
-        // Retry database operation
         updated = this.database.updateFileLocation(
           fileId,
           targetPath,
@@ -618,7 +587,7 @@ export class LibraryService {
           path.basename(targetFileName, '.wav')
         );
       } else {
-        console.error(`[LibraryService] Unexpected error during updateFileLocation:`, errorMessage, errorString);
+        console.error(`Unexpected error during updateFileLocation:`, errorMessage);
         throw error;
       }
     }
@@ -659,8 +628,6 @@ export class LibraryService {
     this.resetMetadataSuggestionsCache();
     this.waveformPreviewCache.delete(fileId);
     this.search.rebuildIndex();
-    
-    console.log(`[organizeFile] SUCCESS: fileId=${fileId}, finalPath=${updated.absolutePath}, finalName=${updated.fileName}`);
     return updated;
   }
 
@@ -848,7 +815,6 @@ export class LibraryService {
       const finalAbsolutePath = path.join(targetDirectory, finalFileName);
       const relativePath = this.toLibraryRelativePath(folderPath, finalFileName);
       const tempPath = `${finalAbsolutePath}.${Date.now()}-${file.id}-${Math.random().toString(16).slice(2)}.tmp`;
-      console.log(`[renumberConflictingFiles] plan fileId=${file.id}, current=${file.fileName}, final=${finalFileName}`);
       return {
         file,
         tempPath,
@@ -862,18 +828,13 @@ export class LibraryService {
     const movedToTemp: typeof plans = [];
 
     try {
-      // Phase 1: Move all files to temp names
       for (const plan of plans) {
-        // Use the fresh absolutePath from database
         await fs.rename(plan.file.absolutePath, plan.tempPath);
-        console.log(`[renumberConflictingFiles] moved to temp: ${plan.file.absolutePath} -> ${plan.tempPath}`);
         movedToTemp.push(plan);
       }
 
-      // Phase 2: Move all temp files to final names and update database
       for (const plan of plans) {
         await fs.rename(plan.tempPath, plan.finalAbsolutePath);
-        console.log(`[renumberConflictingFiles] finalized: ${plan.tempPath} -> ${plan.finalAbsolutePath}`);
         this.database.updateFileLocation(
           plan.file.id,
           plan.finalAbsolutePath,
@@ -883,23 +844,17 @@ export class LibraryService {
         );
       }
     } catch (error) {
-      // Rollback: attempt to restore any files that were moved to temp
       console.error('Error during batch rename, attempting rollback:', error);
       for (const plan of movedToTemp) {
         try {
-          // Check if temp file exists
           await fs.access(plan.tempPath);
-          // Try to restore to original location
           await fs.rename(plan.tempPath, plan.file.absolutePath);
-          console.log(`Rolled back: ${plan.tempPath} -> ${plan.file.absolutePath}`);
         } catch (rollbackError) {
           console.error(`Failed to rollback ${plan.tempPath}:`, rollbackError);
-          // If rollback fails, try to at least rename temp to final destination
           try {
             await fs.rename(plan.tempPath, plan.finalAbsolutePath);
-            console.log(`Recovered: ${plan.tempPath} -> ${plan.finalAbsolutePath}`);
-          } catch (recoveryError) {
-            console.error(`Failed to recover ${plan.tempPath}:`, recoveryError);
+          } catch {
+            // Recovery failed, file may be lost
           }
         }
       }

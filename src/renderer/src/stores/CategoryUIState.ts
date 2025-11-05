@@ -18,7 +18,6 @@ export function initializeCollapsedGroups(categories: string[]): void {
 }
 
 export function setCollapsedGroups(groups: Set<string>): void {
-  console.log('CategoryUIState: setCollapsedGroups called with', Array.from(groups));
   collapsedGroupsState = groups;
 }
 

@@ -132,9 +132,6 @@ function App(): JSX.Element {
     libraryStore.selectFile(fileId, options);
   };
 
-  /**
-   * Selects every visible file so keyboard shortcuts mirror multi-select gestures.
-   */
   const handleSelectAllFiles = () => {
     libraryStore.selectAllVisibleFiles();
   };

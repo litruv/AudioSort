@@ -6,7 +6,6 @@ const mainApp = new MainApp();
 app.whenReady()
   .then(() => mainApp.initialize())
   .catch((error: unknown) => {
-    // eslint-disable-next-line no-console -- Logging critical boot failures is necessary for troubleshooting.
     console.error('Failed to initialise application', error);
     app.quit();
   });
