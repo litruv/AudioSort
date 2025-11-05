@@ -1,4 +1,5 @@
 # AudioSort
+[![Build/release](https://github.com/litruv/AudioSort/actions/workflows/build.yml/badge.svg)](https://github.com/litruv/AudioSort/actions/workflows/build.yml)
 
 A desktop application for organizing, tagging, and managing WAV audio files with Universal Category System (UCS) support.
 
