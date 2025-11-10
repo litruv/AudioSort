@@ -145,6 +145,7 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
             type="button"
             className={className}
             draggable={true}
+            data-file-id={file.id}
             ref={(node) => {
               if (node) {
                 buttonRefs.current.set(file.id, node);

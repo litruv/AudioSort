@@ -171,6 +171,14 @@ function App(): JSX.Element {
       return;
     }
     await libraryStore.organizeFile(selectedFile.id, metadata);
+    
+    // Scroll the file into view after organizing (filename may have changed)
+    setTimeout(() => {
+      const element = document.querySelector(`[data-file-id="${selectedFile.id}"]`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }, 100);
   };
 
   const handleUpdateCustomName = async (customName: string | null) => {

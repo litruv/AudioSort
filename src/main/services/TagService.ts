@@ -61,15 +61,19 @@ export class TagService {
       const buffer = fs.readFileSync(filePath);
       const wave = new WaveFile(buffer);
       const tags = this.extractInfoTagMap(wave);
+      
+      // Read from individual fields
+      const title = tags.INAM?.trim() || undefined;
+      const author = tags.IART?.trim() || undefined;
+      const copyright = tags.ICOP?.trim() || undefined;
+      
       const ratingValue = tags.IRTD ? Number.parseInt(tags.IRTD, 10) : undefined;
       let rating: number | undefined;
       if (typeof ratingValue === 'number' && Number.isFinite(ratingValue)) {
         rating = Math.floor(ratingValue / 2);
       }
-
-      const copyright = tags.ICOP?.trim() || undefined;
       
-      // Try to read parentId from JSON comment first
+      // Try to read parentId from JSON comment
       let parentId: number | undefined;
       const comment = tags.ICMT?.trim();
       if (comment) {
@@ -79,17 +83,12 @@ export class TagService {
             parentId = parsed.parentId;
           }
         } catch {
-          // Not JSON or invalid, try fallback to IPAR
-          const parentRaw = tags.IPAR?.trim();
-          if (parentRaw && parentRaw.length > 0) {
-            const parsedNum = Number.parseInt(parentRaw, 10);
-            if (Number.isFinite(parsedNum)) {
-              parentId = parsedNum;
-            }
-          }
+          // Not JSON, ignore
         }
-      } else {
-        // No comment, try fallback to IPAR
+      }
+      
+      // Fallback to IPAR field if no JSON parentId
+      if (parentId === undefined) {
         const parentRaw = tags.IPAR?.trim();
         if (parentRaw && parentRaw.length > 0) {
           const parsedNum = Number.parseInt(parentRaw, 10);
@@ -100,8 +99,8 @@ export class TagService {
       }
 
       return {
-        author: tags.IART?.trim() || undefined,
-        title: tags.INAM?.trim() || undefined,
+        author,
+        title,
         rating,
         copyright,
         parentId
@@ -176,13 +175,7 @@ export class TagService {
         ? String(metadata.parentId)
         : null;
       const commentPayload = {
-        version: 1,
-        tags: tagValuesList,
-        categories: categoryValuesList,
-        parentId: metadata.parentId ?? null,
-        title: effectiveTitle,
-        author: effectiveAuthor,
-        rating: metadata.rating ?? null
+        parentId: metadata.parentId ?? null
       } satisfies Record<string, unknown>;
       const commentText = JSON.stringify(commentPayload);
 
@@ -206,7 +199,7 @@ export class TagService {
       fs.writeFileSync(filePath, updatedBuffer);
 
       console.log(`Wrote metadata to ${filePath}:`, {
-        tags: Array.isArray(metadata.tags) ? metadata.tags.join(', ') : '',
+        comment: commentText,
         categories: metadata.categories.join(', '),
         title: effectiveTitle,
         author: effectiveAuthor,

@@ -171,45 +171,6 @@ export function TagEditor({ categories, availableCategories, onSave, showHeading
   return (
     <section className="tag-editor">
       {showHeading && <h2>Categories</h2>}
-      <div className="category-filter">
-        <input
-          value={categoryFilter}
-          onChange={(event) => setCategoryFilter(event.target.value)}
-          placeholder="Filter UCS categories"
-        />
-      </div>
-      {categoryFilter.trim().length > 0 && (
-        filterSuggestions.length > 0 ? (
-          <div className="category-filter-suggestions">
-            <span className="category-filter-suggestions-label">Suggestions</span>
-            <div className="category-filter-suggestion-list">
-              {filterSuggestions.map((entry) => {
-                const selected = selectedCategories.has(entry.id);
-                const colorStyle = createCategoryStyleVars(categoryColorMap.get(entry.id));
-                const categoryLabel = formatCategoryLabel(entry.category);
-                const subCategoryLabel = formatCategoryLabel(entry.subCategory);
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={selected ? 'category-filter-suggestion category-filter-suggestion--selected' : 'category-filter-suggestion'}
-                    onClick={() => toggleCategory(entry.id)}
-                    style={colorStyle}
-                    title={`${categoryLabel} ${subCategoryLabel}`}
-                  >
-                    <span className="category-filter-suggestion-name">
-                      <span className="category-label category-label--muted">{categoryLabel}</span>
-                      <span className="category-label category-label--primary">{subCategoryLabel}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ) : (
-          <div className="category-filter-empty">No categories match this filter.</div>
-        )
-      )}
       <div className="selected-categories">
         <div className="selected-category-chip-list">
           {selectedCategoryRecords.length === 0 && <span className="selected-category-empty">No categories selected</span>}
@@ -235,6 +196,12 @@ export function TagEditor({ categories, availableCategories, onSave, showHeading
                     star.style.width = 'auto';
                     star.style.padding = '0 4px';
                   }
+                  const removeBtn = e.currentTarget.querySelector('.selected-category-chip-remove-button') as HTMLElement;
+                  if (removeBtn) {
+                    removeBtn.style.opacity = '1';
+                    removeBtn.style.width = 'auto';
+                    removeBtn.style.padding = '0 4px';
+                  }
                 }}
                 onMouseLeave={(e) => {
                   const star = e.currentTarget.querySelector('.category-star-button') as HTMLElement;
@@ -242,6 +209,12 @@ export function TagEditor({ categories, availableCategories, onSave, showHeading
                     star.style.opacity = '0';
                     star.style.width = '0';
                     star.style.padding = '0';
+                  }
+                  const removeBtn = e.currentTarget.querySelector('.selected-category-chip-remove-button') as HTMLElement;
+                  if (removeBtn) {
+                    removeBtn.style.opacity = '0';
+                    removeBtn.style.width = '0';
+                    removeBtn.style.padding = '0';
                   }
                 }}
                 title={isPrimary ? `${categoryLabel} ${subCategoryLabel} (Primary - used for organization)` : `${categoryLabel} ${subCategoryLabel}`}
@@ -286,10 +259,16 @@ export function TagEditor({ categories, availableCategories, onSave, showHeading
                   style={{
                     background: 'none',
                     border: 'none',
-                    padding: '0 4px',
+                    padding: '0',
+                    margin: 0,
                     cursor: 'pointer',
                     fontSize: '18px',
-                    lineHeight: 1
+                    lineHeight: 1,
+                    opacity: 0,
+                    width: '0',
+                    overflow: 'hidden',
+                    transition: 'opacity 0.2s ease, width 0.2s ease, padding 0.2s ease',
+                    flexShrink: 0
                   }}
                   aria-label="Remove category"
                 >
@@ -308,6 +287,45 @@ export function TagEditor({ categories, availableCategories, onSave, showHeading
           Clear All
         </button>
       </div>
+      <div className="category-filter">
+        <input
+          value={categoryFilter}
+          onChange={(event) => setCategoryFilter(event.target.value)}
+          placeholder="Filter UCS categories"
+        />
+      </div>
+      {categoryFilter.trim().length > 0 && (
+        filterSuggestions.length > 0 ? (
+          <div className="category-filter-suggestions">
+            <span className="category-filter-suggestions-label">Suggestions</span>
+            <div className="category-filter-suggestion-list">
+              {filterSuggestions.map((entry) => {
+                const selected = selectedCategories.has(entry.id);
+                const colorStyle = createCategoryStyleVars(categoryColorMap.get(entry.id));
+                const categoryLabel = formatCategoryLabel(entry.category);
+                const subCategoryLabel = formatCategoryLabel(entry.subCategory);
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className={selected ? 'category-filter-suggestion category-filter-suggestion--selected' : 'category-filter-suggestion'}
+                    onClick={() => toggleCategory(entry.id)}
+                    style={colorStyle}
+                    title={`${categoryLabel} ${subCategoryLabel}`}
+                  >
+                    <span className="category-filter-suggestion-name">
+                      <span className="category-label category-label--muted">{categoryLabel}</span>
+                      <span className="category-label category-label--primary">{subCategoryLabel}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="category-filter-empty">No categories match this filter.</div>
+        )
+      )}
       <div className="category-list-pane">
         <button
           type="button"

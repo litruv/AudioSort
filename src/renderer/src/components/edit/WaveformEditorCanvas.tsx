@@ -415,6 +415,13 @@ export function WaveformEditorCanvas({
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    // Middle click - reset zoom to full view
+    if (event.button === 1) {
+      event.preventDefault();
+      updateViewport(0, durationMs);
+      return;
+    }
+    
     if (event.button === 2) {
       clickContextRef.current = null;
       const canvas = canvasRef.current;
