@@ -6,10 +6,13 @@ import CategorySidebar from './components/CategorySidebar';
 import AudioPlayer from './components/AudioPlayer';
 import SettingsDialog from './components/SettingsDialog';
 import DuplicateComparisonDialog from './components/DuplicateComparisonDialog';
+import EditModePanel from './components/edit/EditModePanel';
 import { useLibrarySnapshot } from './hooks/useLibrarySnapshot';
 import { loadPlayerFile, usePlayerSnapshot } from './hooks/usePlayerSnapshot';
 import { libraryStore, type CategoryFilterValue } from './stores/LibraryStore';
 import type { AudioFileSummary } from '../../shared/models';
+
+type RightPanelTab = 'listen' | 'edit';
 
 /**
  * Root renderer component orchestrating layout and interactions.
@@ -21,6 +24,7 @@ function App(): JSX.Element {
   const [duplicateGroups, setDuplicateGroups] = useState<{ checksum: string; files: AudioFileSummary[] }[] | null>(null);
   const [showStatusMessage, setShowStatusMessage] = useState(false);
   const [statusFadingOut, setStatusFadingOut] = useState(false);
+  const [activeTab, setActiveTab] = useState<RightPanelTab>('listen');
   
   const statusMessage = useMemo(() => {
     if (!library.lastScan) {
@@ -132,10 +136,6 @@ function App(): JSX.Element {
     libraryStore.selectFile(fileId, options);
   };
 
-  const handleSelectAllFiles = () => {
-    libraryStore.selectAllVisibleFiles();
-  };
-
   const handlePlayFile = (file: AudioFileSummary) => {
     loadPlayerFile(file, true);
   };
@@ -158,7 +158,7 @@ function App(): JSX.Element {
     await libraryStore.moveFile(selectedFile.id, targetDirectory);
   };
 
-  const handleOrganize = async (metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }) => {
+  const handleOrganize = async (metadata: { customName?: string; author?: string; copyright?: string; rating?: number }) => {
     if (!selectedFile) {
       return;
     }
@@ -187,11 +187,11 @@ function App(): JSX.Element {
     await libraryStore.updateCustomName(fileId, customName);
   };
 
-  const handleMultiFileOrganize = async (fileId: number, metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }) => {
+  const handleMultiFileOrganize = async (fileId: number, metadata: { customName?: string; author?: string; copyright?: string; rating?: number }) => {
     await libraryStore.organizeFile(fileId, metadata);
   };
 
-  const handleMultiFileUpdateMetadata = async (fileId: number, metadata: { author?: string | null; copyright?: string | null; rating?: number }) => {
+  const handleMultiFileUpdateMetadata = async (fileId: number, metadata: { author?: string; copyright?: string; rating?: number }) => {
     await libraryStore.updateFileMetadata(fileId, metadata);
   };
 
@@ -217,6 +217,18 @@ function App(): JSX.Element {
     setSettingsOpen(false);
   };
 
+  const handleEditModeClose = () => {
+    setActiveTab('listen');
+  };
+
+  const handleEditModeSplitComplete = async (created: AudioFileSummary[]) => {
+    await libraryStore.rescan();
+    setActiveTab('listen');
+    if (created.length > 0) {
+      libraryStore.selectFile(created[0].id);
+    }
+  };
+
   return (
     <div className="app-root">
       {showStatusMessage && statusMessage && (
@@ -240,7 +252,6 @@ function App(): JSX.Element {
           onPlay={handlePlayFile}
           searchValue={library.searchQuery}
           onSearchChange={handleSearch}
-          onSelectAll={handleSelectAllFiles}
         />
         <div className="app-details">
           {isMultiSelect ? (
@@ -255,17 +266,45 @@ function App(): JSX.Element {
             />
           ) : (
             <>
-              <FileDetailPanel
-                file={selectedFile}
-                categories={library.categories}
-                onRename={handleRename}
-                onMove={handleMove}
-                onOrganize={handleOrganize}
-                onUpdateTags={handleTagUpdate}
-                onUpdateCustomName={handleUpdateCustomName}
-                metadataSuggestionsVersion={library.metadataSuggestionsVersion}
-              />
-              <AudioPlayer snapshot={player} />
+              <div className="detail-tabs">
+                <button
+                  type="button"
+                  className={activeTab === 'listen' ? 'detail-tab detail-tab--active' : 'detail-tab'}
+                  onClick={() => setActiveTab('listen')}
+                >
+                  Listen
+                </button>
+                <button
+                  type="button"
+                  className={activeTab === 'edit' ? 'detail-tab detail-tab--active' : 'detail-tab'}
+                  onClick={() => setActiveTab('edit')}
+                  disabled={!selectedFile}
+                >
+                  Edit
+                </button>
+              </div>
+              {activeTab === 'listen' ? (
+                <>
+                  <FileDetailPanel
+                    file={selectedFile}
+                    categories={library.categories}
+                    onRename={handleRename}
+                    onMove={handleMove}
+                    onOrganize={handleOrganize}
+                    onUpdateTags={handleTagUpdate}
+                    onUpdateCustomName={handleUpdateCustomName}
+                    metadataSuggestionsVersion={library.metadataSuggestionsVersion}
+                  />
+                  <AudioPlayer snapshot={player} />
+                </>
+              ) : selectedFile ? (
+                <EditModePanel
+                  file={selectedFile}
+                  categories={library.categories}
+                  onClose={handleEditModeClose}
+                  onSplitComplete={handleEditModeSplitComplete}
+                />
+              ) : null}
             </>
           )}
         </div>

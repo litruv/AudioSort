@@ -107,3 +107,33 @@ export interface AudioBufferPayload {
   /** MIME type for the audio data. */
   mimeType: string;
 }
+
+/**
+ * Optional metadata overrides applied while creating split segments.
+ */
+export interface SegmentMetadataInput {
+  /** Overrides the custom name embedded into the segment (null clears it). */
+  customName?: string | null;
+  /** Overrides the author/creator metadata. */
+  author?: string | null;
+  /** Overrides the rating metadata (1-5). */
+  rating?: number;
+  /** Overrides the applied free-form tags. */
+  tags?: string[];
+  /** Overrides the applied UCS categories. */
+  categories?: string[];
+}
+
+/**
+ * Describes a region that should be extracted as a new audio segment.
+ */
+export interface SplitSegmentRequest {
+  /** Inclusive start offset in milliseconds. */
+  startMs: number;
+  /** Exclusive end offset in milliseconds. */
+  endMs: number;
+  /** Optional display label used for segment naming. */
+  label?: string;
+  /** Metadata overrides to apply to the generated file. */
+  metadata?: SegmentMetadataInput;
+}

@@ -9,26 +9,21 @@ export interface FileListProps {
   onPlay?(file: AudioFileSummary): void;
   searchValue: string;
   onSearchChange(value: string): void;
-  /**
-   * Invoked when the user requests to select every visible file (Ctrl+A).
-   */
-  onSelectAll?(): void;
 }
 
 /**
  * Vertical list of WAV files with highlighting for the active selection.
  */
-export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, searchValue, onSearchChange, onSelectAll }: FileListProps): JSX.Element {
+export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, searchValue, onSearchChange }: FileListProps): JSX.Element {
   const buttonRefs = useRef(new Map<number, HTMLButtonElement>());
   const waveformCacheRef = useRef<Record<number, WaveformVisual>>({});
   const [, forceWaveformUpdate] = useReducer((value: number) => value + 1, 0);
   const dragGhostRef = useRef<HTMLElement | null>(null);
-  const dragRotation = useRef(0);
-  const lastDragX = useRef(0);
+  const dragRotation = useRef<number>(0);
+  const lastDragX = useRef<number>(0);
   const dropTargetPosition = useRef<{ x: number; y: number } | null>(null);
-  const dragOffset = useRef({ x: 0, y: 0 });
-  const dragStartTime = useRef(0);
-  const listContainerRef = useRef<HTMLDivElement | null>(null);
+  const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const dragStartTime = useRef<number>(0);
 
   useEffect(() => {
     if (selectedId === null) {
@@ -44,6 +39,7 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
     if (isTypingContext || isEditable) {
       return;
     }
+    // Keep keyboard focus aligned with the active selection.
     button.focus();
   }, [selectedId]);
 
@@ -92,43 +88,6 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
     };
   }, [files]);
 
-  useEffect(() => {
-    if (!onSelectAll) {
-      return undefined;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey)) {
-        return;
-      }
-      if (event.key !== 'a' && event.key !== 'A') {
-        return;
-      }
-
-      const activeElement = document.activeElement as HTMLElement | null;
-      if (!activeElement) {
-        return;
-      }
-      const isTypingContext = activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement;
-      const isEditable = activeElement.getAttribute('contenteditable') === 'true';
-      if (isTypingContext || isEditable) {
-        return;
-      }
-
-      if (listContainerRef.current && !listContainerRef.current.contains(activeElement)) {
-        return;
-      }
-
-      event.preventDefault();
-      onSelectAll();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [onSelectAll]);
-
   const handleClick = (fileId: number, event: React.MouseEvent) => {
     onSelect(fileId, {
       multi: event.ctrlKey || event.metaKey,
@@ -166,7 +125,7 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
           placeholder="Search files..."
         />
       </div>
-  <div className="file-list-items" ref={listContainerRef}>
+      <div className="file-list-items">
       {files.map((file) => {
         const isActive = file.id === selectedId;
         const isSelected = selectedIds.has(file.id);
@@ -196,6 +155,8 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
             onClick={(event) => handleClick(file.id, event)}
             onDoubleClick={() => handleDoubleClick(file)}
             onDragStart={(event) => {
+              // If dragging an unselected item, only drag that item
+              // If dragging a selected item, drag all selected items
               const draggedIds = selectedIds.has(file.id) ? Array.from(selectedIds) : [file.id];
               
               event.dataTransfer.setData('application/audiosort-file', JSON.stringify({
@@ -204,6 +165,7 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
               }));
               event.dataTransfer.effectAllowed = 'copy';
               
+              // Create transparent drag image to hide the default
               const transparent = document.createElement('div');
               transparent.style.width = '1px';
               transparent.style.height = '1px';
@@ -212,6 +174,7 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
               event.dataTransfer.setDragImage(transparent, 0, 0);
               setTimeout(() => transparent.remove(), 0);
               
+              // Calculate offset from click position to element center
               const sourceElement = event.currentTarget as HTMLElement;
               const rect = sourceElement.getBoundingClientRect();
               const elementCenterX = rect.left + rect.width / 2;
@@ -221,18 +184,21 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
                 y: elementCenterY - event.clientY
               };
               
+              // Calculate transition duration based on offset distance
               const offsetDistance = Math.sqrt(
                 dragOffset.current.x * dragOffset.current.x + 
                 dragOffset.current.y * dragOffset.current.y
               );
               const maxDistance = Math.sqrt(rect.width * rect.width + rect.height * rect.height) / 2;
               const normalizedDistance = Math.min(offsetDistance / maxDistance, 1);
-              const transitionDuration = 0.1 + normalizedDistance * 0.2;
+              const transitionDuration = 0.1 + normalizedDistance * 0.2; // 0.1s to 0.3s
               
               dragStartTime.current = Date.now();
               
+              // Clone the current element for custom floating preview
               const ghost = sourceElement.cloneNode(true) as HTMLElement;
               
+              // Create a wrapper for rotation that doesn't affect position transition
               const rotationWrapper = document.createElement('div');
               rotationWrapper.style.position = 'fixed';
               rotationWrapper.style.top = `${event.clientY}px`;
@@ -256,6 +222,7 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
               rotationWrapper.appendChild(ghost);
               document.body.appendChild(rotationWrapper);
               
+              // Trigger the offset transition to center
               requestAnimationFrame(() => {
                 if (ghost.parentNode) {
                   ghost.style.transform = `translate(-50%, -50%)`;
@@ -277,19 +244,25 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
               const clamped = Math.max(-12, Math.min(12, blended));
               dragRotation.current = clamped;
               
+              // Update wrapper position (no rotation here)
               dragGhostRef.current.style.top = `${event.clientY}px`;
               dragGhostRef.current.style.left = `${event.clientX}px`;
+              
+              // Apply rotation directly to wrapper without transition
               dragGhostRef.current.style.transform = `rotate(${clamped}deg)`;
               
+              // Track position for potential drop animation
               dropTargetPosition.current = { x: event.clientX, y: event.clientY };
             }}
             onDragEnd={(event) => {
               const wrapper = dragGhostRef.current;
               if (!wrapper) return;
               
+              // Check if this was a successful drop (dropEffect will be 'copy' if accepted)
               const wasDropped = event.dataTransfer.dropEffect === 'copy';
               
               if (wasDropped && dropTargetPosition.current) {
+                // Animate shrink into drop position
                 wrapper.style.transition = 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)';
                 wrapper.style.transform = `rotate(0deg) scale(0)`;
                 wrapper.style.opacity = '0';
@@ -299,6 +272,7 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
                   dragGhostRef.current = null;
                 }, 300);
               } else {
+                // No drop or cancelled - remove immediately
                 wrapper.remove();
                 dragGhostRef.current = null;
               }

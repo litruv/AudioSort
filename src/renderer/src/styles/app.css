@@ -8,16 +8,6 @@
 body {
   margin: 0;
   background-color: #0c0f13;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-input,
-textarea,
-select,
-[contenteditable='true'] {
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 * {
@@ -318,6 +308,7 @@ select,
 
 .file-list-search .search-input {
   width: 100%;
+  box-sizing: border-box;
 }
 
 .file-list-items {
@@ -427,6 +418,55 @@ select,
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+}
+
+.detail-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 0.5rem 0 0.5rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.detail-tab {
+  padding: 0.5rem 1.25rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 0.5rem 0.5rem 0 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.detail-tab:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.detail-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.detail-tab--active {
+  background: rgba(39, 110, 241, 0.15);
+  border-color: rgba(39, 110, 241, 0.3);
+  color: #eef3f8;
+}
+
+.detail-tab--active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #276ef1;
 }
 
 .file-detail {

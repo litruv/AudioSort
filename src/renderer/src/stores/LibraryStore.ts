@@ -3,6 +3,7 @@ import type {
   AudioFileSummary,
   CategoryRecord,
   LibraryScanSummary,
+  SplitSegmentRequest,
   TagUpdatePayload
 } from '../../../shared/models';
 
@@ -359,6 +360,32 @@ export class LibraryStore extends EventTarget {
       metadataSuggestionsVersion: this.snapshot.metadataSuggestionsVersion + 1
     };
     this.emitChange();
+  }
+
+  /**
+   * Splits a file into multiple segments and refreshes the library snapshot.
+   */
+  public async splitFile(fileId: number, segments: SplitSegmentRequest[]): Promise<AudioFileSummary[]> {
+    const created = await window.api.splitFile(fileId, segments);
+    const files = await window.api.listAudioFiles();
+    const { categoryFilter } = this.snapshot;
+    let visible: AudioFileSummary[];
+    if (categoryFilter === CATEGORY_FILTER_UNTAGGED) {
+      visible = files.filter((file) => file.categories.length === 0);
+    } else if (categoryFilter) {
+      visible = files.filter((file) => file.categories.includes(categoryFilter));
+    } else {
+      visible = files.slice();
+    }
+
+    this.snapshot = {
+      ...this.snapshot,
+      files,
+      visibleFiles: visible,
+      metadataSuggestionsVersion: this.snapshot.metadataSuggestionsVersion + 1
+    };
+    this.emitChange();
+    return created;
   }
 
   /**

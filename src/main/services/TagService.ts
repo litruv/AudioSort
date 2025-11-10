@@ -11,14 +11,22 @@ export class TagService {
 
   /**
    * Applies tags and categories to a file record and embeds the metadata into the WAV container.
+   * Preserves existing author, title, and rating fields.
    */
   public applyTagging(fileId: number, tags: string[], categories: string[]): AudioFileSummary {
     const normalisedTags = this.normaliseValues(tags);
     const normalisedCategories = this.normaliseValues(categories);
     const updated = this.database.updateTagging(fileId, normalisedTags, normalisedCategories);
+    
+    // Read existing metadata to preserve author, title, and rating
+    const existing = this.readMetadata(updated.absolutePath);
+    
     this.writeWaveMetadata(updated.absolutePath, {
       tags: normalisedTags,
-      categories: normalisedCategories
+      categories: normalisedCategories,
+      title: existing.title,
+      author: existing.author,
+      rating: existing.rating
     });
     return updated;
   }
@@ -69,15 +77,16 @@ export class TagService {
 
   /**
    * Writes tags and categories to an organized file as embedded metadata.
+   * All metadata fields are required to prevent accidental clearing.
    */
   public writeMetadataOnly(
     filePath: string,
     metadata: {
       tags: string[];
       categories: string[];
-  title?: string | null;
-  author?: string | null;
-      rating?: number;
+      title: string | null | undefined;
+      author: string | null | undefined;
+      rating: number | undefined;
     }
   ): void {
     this.writeWaveMetadata(filePath, metadata);
@@ -85,15 +94,16 @@ export class TagService {
 
   /**
    * Writes a simple INFO chunk with the provided metadata. Failures are swallowed so DB state remains authoritative.
+   * All metadata fields must be explicitly provided to prevent accidental data loss.
    */
   private writeWaveMetadata(
     filePath: string,
     metadata: {
       tags: string[];
       categories: string[];
-  title?: string | null;
-  author?: string | null;
-      rating?: number;
+      title: string | null | undefined;
+      author: string | null | undefined;
+      rating: number | undefined;
     }
   ): void {
     try {

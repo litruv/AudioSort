@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { parse } from 'csv-parse/sync';
-import { AppSettings, AudioBufferPayload, AudioFileSummary, CategoryRecord, LibraryScanSummary, TagUpdatePayload } from '../../shared/models';
+import { AppSettings, AudioBufferPayload, AudioFileSummary, CategoryRecord, LibraryScanSummary, SplitSegmentRequest, TagUpdatePayload } from '../../shared/models';
 import { DatabaseService, FileRecordInput } from './DatabaseService';
 import { SettingsService } from './SettingsService';
 import { TagService } from './TagService';
@@ -292,7 +292,7 @@ export class LibraryService {
    */
   public async getWaveformPreview(fileId: number, pointCount = 160): Promise<{ samples: number[]; rms: number }> {
     const record = this.database.getFileById(fileId);
-    const effectivePoints = Math.min(Math.max(pointCount ?? 160, 32), 512);
+  const effectivePoints = Math.min(Math.max(pointCount ?? 160, 32), 16384);
     const cacheHit = this.waveformPreviewCache.get(fileId);
     if (cacheHit && cacheHit.modifiedAt === record.modifiedAt && cacheHit.pointCount === effectivePoints) {
       return { samples: cacheHit.samples, rms: cacheHit.rms };
@@ -634,6 +634,199 @@ export class LibraryService {
     }
     this.resetMetadataSuggestionsCache();
     this.search.rebuildIndex();
+  }
+
+  /**
+   * Splits an audio file into multiple segments, writing each segment to disk and registering it in the library.
+   */
+  public async splitFile(fileId: number, requestSegments: SplitSegmentRequest[]): Promise<AudioFileSummary[]> {
+    if (!Array.isArray(requestSegments) || requestSegments.length === 0) {
+      return [];
+    }
+
+    const record = this.database.getFileById(fileId);
+    const fileBuffer = await fs.readFile(record.absolutePath);
+  const wave = new WaveFile(fileBuffer);
+  const format = (wave as WaveFile & { fmt?: { sampleRate?: number; bitsPerSample?: number } }).fmt;
+    const rawSamples = wave.getSamples(false, Float64Array) as Float64Array | Float64Array[];
+    const channels = Array.isArray(rawSamples) ? rawSamples : [rawSamples];
+    if (channels.length === 0 || channels[0].length === 0) {
+      throw new Error('Unable to split file: no audio data available.');
+    }
+
+  const sampleRate = format?.sampleRate ?? record.sampleRate ?? null;
+    if (!sampleRate) {
+      throw new Error('Unable to split file: missing sample rate information.');
+    }
+
+    const sourceSampleCount = channels[0].length;
+    const totalDurationMs = Math.round((sourceSampleCount / sampleRate) * 1000);
+    const bitDepthNumeric = (() => {
+  const explicit = format?.bitsPerSample;
+      if (typeof explicit === 'number' && Number.isFinite(explicit) && explicit > 0) {
+        return explicit;
+      }
+      if (typeof record.bitDepth === 'number' && Number.isFinite(record.bitDepth) && record.bitDepth > 0) {
+        return record.bitDepth;
+      }
+      const parsedFromText = Number.parseInt(typeof wave.bitDepth === 'string' ? wave.bitDepth : '', 10);
+      return Number.isFinite(parsedFromText) && parsedFromText > 0 ? parsedFromText : null;
+    })();
+    const bitDepthText = (() => {
+      if (typeof wave.bitDepth === 'string' && wave.bitDepth.trim().length > 0) {
+        return wave.bitDepth.trim();
+      }
+      if (typeof bitDepthNumeric === 'number') {
+        return bitDepthNumeric.toString();
+      }
+      return '16';
+    })();
+    const container = (wave as WaveFile & { container?: string }).container ?? 'RIFF';
+
+    let originalMetadata: { author?: string | null; rating?: number; title?: string | null } = {};
+    try {
+      const metadata = this.tagService.readMetadata(record.absolutePath);
+      originalMetadata = {
+        author: metadata.author ?? null,
+        rating: metadata.rating ?? undefined,
+        title: metadata.title ?? null
+      };
+    } catch (error) {
+      console.warn('Failed to read original metadata before splitting', error);
+    }
+
+    const normalizedSegments = requestSegments
+      .map((segment) => {
+        const startMs = Number.isFinite(segment.startMs) ? Math.max(0, Math.min(Math.floor(segment.startMs), totalDurationMs)) : 0;
+        const endMs = Number.isFinite(segment.endMs) ? Math.max(0, Math.min(Math.floor(segment.endMs), totalDurationMs)) : startMs;
+        const safeEnd = Math.max(startMs + 1, endMs);
+        return {
+          startMs,
+          endMs: safeEnd,
+          label: segment.label?.trim() ?? undefined,
+          metadata: segment.metadata
+        };
+      })
+      .filter((segment) => segment.endMs - segment.startMs >= 5)
+      .sort((a, b) => a.startMs - b.startMs);
+
+    if (normalizedSegments.length === 0) {
+      return [];
+    }
+
+    const libraryRoot = this.settings.ensureLibraryPath();
+    const sourceDirectory = path.dirname(record.absolutePath);
+    const relativeFolder = path.dirname(record.relativePath);
+    const folderForJoin = relativeFolder === '.' ? '' : relativeFolder;
+    const baseName = path.basename(record.fileName, path.extname(record.fileName));
+    const usedNames = new Set<string>();
+    let sequence = 1;
+    const created: AudioFileSummary[] = [];
+
+    for (const segment of normalizedSegments) {
+      const startSample = Math.max(0, Math.min(Math.floor((segment.startMs / 1000) * sampleRate), sourceSampleCount - 1));
+      const endSample = Math.max(
+        startSample + 1,
+        Math.min(Math.floor((segment.endMs / 1000) * sampleRate), sourceSampleCount)
+      );
+      if (endSample <= startSample) {
+        continue;
+      }
+
+      const segmentChannels = channels.map((channel) => channel.slice(startSample, endSample));
+      const nextWave = new WaveFile();
+      nextWave.fromScratch(channels.length, sampleRate, bitDepthText, segmentChannels.length === 1 ? segmentChannels[0] : segmentChannels);
+      (nextWave as WaveFile & { container?: string }).container = container;
+      const segmentBytes = Buffer.from(nextWave.toBuffer());
+
+      let segmentFileName = '';
+      let segmentAbsolutePath = '';
+      for (let attempt = 0; attempt < 1000; attempt += 1) {
+        const suffix = this.organization.formatSequenceNumber(sequence);
+        sequence += 1;
+        const candidateName = `${baseName}_segment${suffix}.wav`;
+        if (usedNames.has(candidateName)) {
+          continue;
+        }
+        const candidatePath = path.join(sourceDirectory, candidateName);
+        const exists = await this.pathExists(candidatePath);
+        if (exists) {
+          continue;
+        }
+        segmentFileName = candidateName;
+        segmentAbsolutePath = candidatePath;
+        usedNames.add(candidateName);
+        break;
+      }
+
+      if (!segmentFileName || !segmentAbsolutePath) {
+        throw new Error('Failed to allocate filename for split segment.');
+      }
+
+      this.assertWithinLibrary(libraryRoot, segmentAbsolutePath);
+      await fs.writeFile(segmentAbsolutePath, segmentBytes);
+      const stats = await fs.stat(segmentAbsolutePath);
+      const checksum = createHash('md5').update(segmentBytes).digest('hex');
+      const relativePath = this.toLibraryRelativePath(folderForJoin, segmentFileName);
+      const durationMs = Math.round(((endSample - startSample) / sampleRate) * 1000);
+
+      const resolvedTagsSource = segment.metadata?.tags ?? record.tags;
+      const resolvedCategoriesSource = segment.metadata?.categories ?? record.categories;
+      const resolvedTags = Array.isArray(resolvedTagsSource) ? resolvedTagsSource.slice() : record.tags.slice();
+      const resolvedCategories = Array.isArray(resolvedCategoriesSource)
+        ? resolvedCategoriesSource.slice()
+        : record.categories.slice();
+      const fileRecord = this.database.upsertFile({
+        absolutePath: segmentAbsolutePath,
+        relativePath,
+        fileName: segmentFileName,
+        displayName: path.basename(segmentFileName, '.wav'),
+        modifiedAt: stats.mtimeMs,
+        createdAt: Number.isNaN(stats.birthtimeMs) ? null : stats.birthtimeMs,
+        size: stats.size,
+        durationMs,
+        sampleRate,
+        bitDepth: bitDepthNumeric,
+        checksum,
+        tags: resolvedTags,
+        categories: resolvedCategories
+      });
+
+      const resolvedCustomName = segment.metadata?.customName !== undefined
+        ? this.normaliseMetadataInput(segment.metadata.customName)
+        : record.customName ?? null;
+      const updatedRecord = resolvedCustomName !== fileRecord.customName
+        ? this.database.updateCustomName(fileRecord.id, resolvedCustomName ?? null)
+        : fileRecord;
+
+      const resolvedAuthor = segment.metadata?.author !== undefined
+        ? this.normaliseMetadataInput(segment.metadata.author)
+        : this.normaliseMetadataInput(originalMetadata.author ?? null);
+      const resolvedRating = segment.metadata?.rating !== undefined
+        ? segment.metadata.rating ?? undefined
+        : originalMetadata.rating;
+
+      this.tagService.writeMetadataOnly(segmentAbsolutePath, {
+        tags: resolvedTags,
+        categories: resolvedCategories,
+        title: resolvedCustomName ?? updatedRecord.displayName,
+        author: resolvedAuthor ?? undefined,
+        rating: resolvedRating
+      });
+
+      if (typeof resolvedAuthor === 'string' && resolvedAuthor.length > 0) {
+        this.updateMetadataSuggestionsCache(resolvedAuthor);
+      }
+
+      this.waveformPreviewCache.delete(updatedRecord.id);
+      created.push(updatedRecord);
+    }
+
+    this.waveformPreviewCache.delete(record.id);
+    this.resetMetadataSuggestionsCache();
+    this.search.rebuildIndex();
+
+    return created;
   }
 
   /**

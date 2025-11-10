@@ -138,9 +138,9 @@ export class MainApp {
     ipcMain.removeHandler(IPC_CHANNELS.libraryMove);
     ipcMain.removeHandler(IPC_CHANNELS.libraryOrganize);
     ipcMain.removeHandler(IPC_CHANNELS.libraryBuffer);
-    ipcMain.removeHandler(IPC_CHANNELS.libraryMetadata);
-    ipcMain.removeHandler(IPC_CHANNELS.libraryMetadataSuggestions);
-    ipcMain.removeHandler(IPC_CHANNELS.libraryUpdateMetadata);
+  ipcMain.removeHandler(IPC_CHANNELS.libraryMetadata);
+  ipcMain.removeHandler(IPC_CHANNELS.libraryMetadataSuggestions);
+  ipcMain.removeHandler(IPC_CHANNELS.libraryUpdateMetadata);
     ipcMain.removeHandler(IPC_CHANNELS.libraryWaveformPreview);
     ipcMain.removeHandler(IPC_CHANNELS.tagsUpdate);
     ipcMain.removeHandler(IPC_CHANNELS.categoriesList);
@@ -163,7 +163,7 @@ export class MainApp {
    * Creates the renderer window and loads the UI.
    */
   private createWindow(): void {
-    const preloadPath = this.resolvePreloadPath();
+  const preloadPath = this.resolvePreloadPath();
     this.mainWindow = new BrowserWindow({
       width: 1280,
       height: 800,
@@ -186,16 +186,18 @@ export class MainApp {
       this.mainWindow = null;
     });
 
-    const devServerUrl = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.VITE_DEV_SERVER_URL;
+    const devServerUrl = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+      ?.VITE_DEV_SERVER_URL;
     if (devServerUrl) {
       this.mainWindow.loadURL(devServerUrl).catch((error: unknown) => {
+        // eslint-disable-next-line no-console -- Logging is useful during development to diagnose boot issues.
         console.error('Failed to load renderer URL', error);
       });
     } else {
       const rendererIndex = this.resolveRendererIndex();
-      this.mainWindow.loadFile(rendererIndex).catch((error: unknown) => {
-        console.error('Failed to load renderer bundle', error);
-      });
+      this.mainWindow
+        .loadFile(rendererIndex)
+        .catch((error: unknown) => console.error('Failed to load renderer bundle', error));
     }
   }
 
@@ -212,7 +214,7 @@ export class MainApp {
     });
 
     ipcMain.handle(IPC_CHANNELS.dialogSelectLibrary, async () => {
-      const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
+  const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
       const targetWindow = this.mainWindow;
       const result = targetWindow
         ? await dialog.showOpenDialog(targetWindow, options)
@@ -239,8 +241,8 @@ export class MainApp {
 
     ipcMain.handle(
       IPC_CHANNELS.libraryOrganize,
-      async (_event: IpcMainInvokeEvent, fileId: number, metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }) =>
-        this.requireLibrary().organizeFile(fileId, metadata)
+      async (_event: IpcMainInvokeEvent, fileId: number, metadata: { customName?: string; author?: string; copyright?: string; rating?: number }) =>
+      this.requireLibrary().organizeFile(fileId, metadata)
     );
 
     ipcMain.handle(
@@ -283,7 +285,7 @@ export class MainApp {
 
     ipcMain.handle(
       IPC_CHANNELS.libraryUpdateMetadata,
-      async (_event: IpcMainInvokeEvent, fileId: number, metadata: { author?: string | null; copyright?: string | null; rating?: number }) =>
+      async (_event: IpcMainInvokeEvent, fileId: number, metadata: { author?: string; copyright?: string; rating?: number }) =>
         this.requireLibrary().updateFileMetadata(fileId, metadata)
     );
   }

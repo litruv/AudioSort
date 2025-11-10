@@ -37,7 +37,7 @@ const api: RendererApi = {
   async moveFile(fileId: number, targetRelativeDirectory: string): Promise<AudioFileSummary> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryMove, fileId, targetRelativeDirectory);
   },
-  async organizeFile(fileId: number, metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }): Promise<AudioFileSummary> {
+  async organizeFile(fileId: number, metadata: { customName?: string; author?: string; copyright?: string; rating?: number }): Promise<AudioFileSummary> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryOrganize, fileId, metadata);
   },
   async updateCustomName(fileId: number, customName: string | null): Promise<AudioFileSummary> {
@@ -70,7 +70,7 @@ const api: RendererApi = {
   async listMetadataSuggestions(): Promise<{ authors: string[]; copyrights: string[] }> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryMetadataSuggestions);
   },
-  async updateFileMetadata(fileId: number, metadata: { author?: string | null; copyright?: string | null; rating?: number }): Promise<void> {
+  async updateFileMetadata(fileId: number, metadata: { author?: string; copyright?: string; rating?: number }): Promise<void> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryUpdateMetadata, fileId, metadata);
   },
   onMenuAction(channel: string, callback: () => void): () => void {
