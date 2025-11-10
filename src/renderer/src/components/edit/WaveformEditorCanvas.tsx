@@ -17,6 +17,10 @@ export interface WaveformEditorCanvasProps {
   onCreateSegment(startMs: number, endMs: number): void;
   /** Invoked while resizing an existing segment. */
   onResizeSegment(segmentId: string, nextStartMs: number, nextEndMs: number): void;
+  /** Invoked when the user clicks the waveform background to audition from that cursor position. */
+  onPlayFromCursor(startMs: number): void;
+  /** Location of the active playback cursor relative to the source audio, if playing. */
+  playbackCursorMs: number | null;
 }
 
 interface DraftSelection {
@@ -34,6 +38,8 @@ const MIN_SEGMENT_MS = 50;
 const MIN_VIEWPORT_MS = 200;
 const MAX_VIEWPORT_MS = Number.POSITIVE_INFINITY;
 const HANDLE_WIDTH_PX = 6;
+const CLICK_TOLERANCE_MS = 20;
+const VIEWPORT_EASING = 0.18;
 
 /**
  * Interactive waveform canvas supporting zoom, pan, and region selection for splitting.
@@ -45,19 +51,38 @@ export function WaveformEditorCanvas({
   selectedSegmentId,
   onSelectSegment,
   onCreateSegment,
-  onResizeSegment
+  onResizeSegment,
+  onPlayFromCursor,
+  playbackCursorMs
 }: WaveformEditorCanvasProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragStateRef = useRef<DragState>({ type: 'none' });
   const viewportRef = useRef<{ startMs: number; durationMs: number }>({ startMs: 0, durationMs });
+  const targetViewportRef = useRef<{ startMs: number; durationMs: number }>({ startMs: 0, durationMs });
   const [viewportVersion, setViewportVersion] = useState(0);
   const [draftSelection, setDraftSelection] = useState<DraftSelection | null>(null);
+  const clickContextRef = useRef<{ startMs: number; insideSegmentId: string | null } | null>(null);
+  const [cursorX, setCursorX] = useState<number | null>(null);
+  const [cursorMs, setCursorMs] = useState<number | null>(null);
+  const [hoveredSegmentId, setHoveredSegmentId] = useState<string | null>(null);
+  const targetCursorXRef = useRef<number | null>(null);
+  const targetCursorMsRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const viewportAnimationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     viewportRef.current = {
       startMs: 0,
       durationMs
     };
+    targetViewportRef.current = {
+      startMs: 0,
+      durationMs
+    };
+    if (viewportAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(viewportAnimationFrameRef.current);
+      viewportAnimationFrameRef.current = null;
+    }
     setViewportVersion((value) => value + 1);
   }, [durationMs]);
 
@@ -140,11 +165,65 @@ export function WaveformEditorCanvas({
         return;
       }
       const isSelected = segment.id === selectedSegmentId;
-      context.fillStyle = isSelected ? 'rgba(255, 204, 0, 0.25)' : 'rgba(255, 255, 255, 0.18)';
+      
+      // Use segment color with adjusted opacity
+      const color = segment.color;
+      const rgbMatch = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+      if (rgbMatch) {
+        const r = parseInt(rgbMatch[1], 16);
+        const g = parseInt(rgbMatch[2], 16);
+        const b = parseInt(rgbMatch[3], 16);
+        context.fillStyle = isSelected ? `rgba(${r}, ${g}, ${b}, 0.4)` : `rgba(${r}, ${g}, ${b}, 0.25)`;
+      } else {
+        context.fillStyle = isSelected ? 'rgba(255, 204, 0, 0.25)' : 'rgba(255, 255, 255, 0.18)';
+      }
       context.fillRect(startX, 0, endX - startX, height);
-      context.fillStyle = isSelected ? '#ffcc00' : 'rgba(255, 255, 255, 0.45)';
+      
+      // Use segment color for handles
+      context.fillStyle = isSelected ? '#ffcc00' : color;
       context.fillRect(startX - HANDLE_WIDTH_PX / 2, 0, HANDLE_WIDTH_PX, height);
       context.fillRect(endX - HANDLE_WIDTH_PX / 2, 0, HANDLE_WIDTH_PX, height);
+
+      // Draw segment labels when being resized or hovered
+      const dragState = dragStateRef.current;
+      const shouldShowLabels = (dragState.type === 'resizing' && dragState.segmentId === segment.id) || 
+                               (hoveredSegmentId === segment.id && dragState.type === 'none');
+      
+      if (shouldShowLabels) {
+        context.font = '11px "Consolas", "Monaco", monospace';
+        context.textBaseline = 'top';
+        
+        const segmentWidth = endX - startX;
+        const durationMs = segment.endMs - segment.startMs;
+        
+        // Start time label
+        const startText = formatTimecode(segment.startMs);
+        const startTextWidth = context.measureText(startText).width;
+        context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        context.fillRect(startX + 2, height - 22, startTextWidth + 6, 18);
+        context.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        context.textAlign = 'left';
+        context.fillText(startText, startX + 5, height - 19);
+        
+        // End time label
+        const endText = formatTimecode(segment.endMs);
+        const endTextWidth = context.measureText(endText).width;
+        context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        context.fillRect(endX - endTextWidth - 8, height - 22, endTextWidth + 6, 18);
+        context.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        context.textAlign = 'right';
+        context.fillText(endText, endX - 5, height - 19);
+        
+        // Duration label in the middle
+        const durationText = formatTimecode(durationMs);
+        const durationTextWidth = context.measureText(durationText).width;
+        const centerX = startX + segmentWidth / 2;
+        context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        context.fillRect(centerX - durationTextWidth / 2 - 3, height / 2 - 9, durationTextWidth + 6, 18);
+        context.fillStyle = 'rgba(255, 204, 0, 1)';
+        context.textAlign = 'center';
+        context.fillText(durationText, centerX, height / 2 - 6);
+      }
     });
 
     if (draftSelection) {
@@ -159,9 +238,114 @@ export function WaveformEditorCanvas({
         context.fillStyle = '#4cc9f0';
         context.fillRect(draftStartX - HANDLE_WIDTH_PX / 2, 0, HANDLE_WIDTH_PX, height);
         context.fillRect(draftEndX - HANDLE_WIDTH_PX / 2, 0, HANDLE_WIDTH_PX, height);
+
+        // Draw draft segment labels
+        context.font = '11px "Consolas", "Monaco", monospace';
+        context.textBaseline = 'top';
+        
+        const durationMs = draftSelection.endMs - draftSelection.startMs;
+        
+        // Start time label
+        const startText = formatTimecode(draftSelection.startMs);
+        const startTextWidth = context.measureText(startText).width;
+        context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        context.fillRect(draftStartX + 2, height - 22, startTextWidth + 6, 18);
+        context.fillStyle = 'rgba(76, 201, 240, 1)';
+        context.textAlign = 'left';
+        context.fillText(startText, draftStartX + 5, height - 19);
+        
+        // End time label
+        const endText = formatTimecode(draftSelection.endMs);
+        const endTextWidth = context.measureText(endText).width;
+        context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        context.fillRect(draftEndX - endTextWidth - 8, height - 22, endTextWidth + 6, 18);
+        context.fillStyle = 'rgba(76, 201, 240, 1)';
+        context.textAlign = 'right';
+        context.fillText(endText, draftEndX - 5, height - 19);
+        
+        // Duration label in the middle
+        const durationText = formatTimecode(durationMs);
+        const durationTextWidth = context.measureText(durationText).width;
+        const centerX = draftStartX + draftWidth / 2;
+        context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        context.fillRect(centerX - durationTextWidth / 2 - 3, height / 2 - 9, durationTextWidth + 6, 18);
+        context.fillStyle = 'rgba(76, 201, 240, 1)';
+        context.textAlign = 'center';
+        context.fillText(durationText, centerX, height / 2 - 6);
       }
     }
-  }, [samples, segments, selectedSegmentId, samplesPerMs, durationMs, viewportVersion, draftSelection]);
+
+    // Draw live playback cursor when the audio is currently playing
+    if (typeof playbackCursorMs === 'number') {
+      const playbackRatio = (playbackCursorMs - viewportStart) / viewportDuration;
+      if (playbackRatio >= 0 && playbackRatio <= 1) {
+        const playbackX = playbackRatio * width;
+        context.strokeStyle = 'rgba(76, 201, 240, 0.85)';
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(playbackX, 0);
+        context.lineTo(playbackX, height);
+        context.stroke();
+
+        context.fillStyle = 'rgba(76, 201, 240, 0.85)';
+        context.beginPath();
+        context.arc(playbackX, Math.max(8, height * 0.08), 3, 0, Math.PI * 2);
+        context.fill();
+
+        context.lineWidth = 1;
+      }
+    }
+
+    // Draw time indicators showing remaining time on left and right
+    context.font = '12px "Consolas", "Monaco", monospace';
+    context.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    context.textBaseline = 'top';
+    
+    // Left indicator - time before viewport start
+    if (viewportStart > 0) {
+      const leftTimeText = '◀ ' + formatTimecode(viewportStart);
+      context.textAlign = 'left';
+      context.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      context.fillRect(4, 4, context.measureText(leftTimeText).width + 8, 20);
+      context.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      context.fillText(leftTimeText, 8, 8);
+    }
+    
+    // Right indicator - time after viewport end
+    const timeRemaining = durationMs - viewportEnd;
+    if (timeRemaining > 0) {
+      const rightTimeText = formatTimecode(timeRemaining) + ' ▶';
+      const rightTextWidth = context.measureText(rightTimeText).width;
+      context.textAlign = 'right';
+      context.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      context.fillRect(width - rightTextWidth - 12, 4, rightTextWidth + 8, 20);
+      context.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      context.fillText(rightTimeText, width - 8, 8);
+    }
+
+    // Draw cursor line (hide when draft selection is active)
+    const showCursor = cursorX !== null && cursorMs !== null && !draftSelection;
+    
+    if (showCursor) {
+      context.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(cursorX, 0);
+      context.lineTo(cursorX, height);
+      context.stroke();
+
+      // Draw cursor timestamp
+      const cursorTimeText = formatTimecode(cursorMs);
+      const cursorTextWidth = context.measureText(cursorTimeText).width;
+      const cursorLabelX = Math.max(4, Math.min(width - cursorTextWidth - 12, cursorX - cursorTextWidth / 2 - 4));
+      
+      context.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      context.fillRect(cursorLabelX, 28, cursorTextWidth + 8, 20);
+      context.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      context.textAlign = 'left';
+      context.fillText(cursorTimeText, cursorLabelX + 4, 32);
+    }
+  }, [samples, segments, selectedSegmentId, samplesPerMs, durationMs, viewportVersion, draftSelection, cursorX, cursorMs, hoveredSegmentId, playbackCursorMs]);
 
   const resolveClientToMs = (clientX: number): number => {
     const canvas = canvasRef.current;
@@ -179,19 +363,60 @@ export function WaveformEditorCanvas({
     return resolveClientToMs(event.clientX);
   };
 
+  // Smoothly interpolate viewport transitions for zoom and pan actions.
+  const animateViewport = () => {
+    const current = viewportRef.current;
+    const target = targetViewportRef.current;
+    const startDelta = target.startMs - current.startMs;
+    const durationDelta = target.durationMs - current.durationMs;
+    const maxDelta = Math.max(Math.abs(startDelta), Math.abs(durationDelta));
+
+    if (maxDelta < 0.5) {
+      if (maxDelta > 0) {
+        viewportRef.current = {
+          startMs: target.startMs,
+          durationMs: target.durationMs
+        };
+        setViewportVersion((value) => value + 1);
+      }
+      viewportAnimationFrameRef.current = null;
+      return;
+    }
+
+    viewportRef.current = {
+      startMs: current.startMs + startDelta * VIEWPORT_EASING,
+      durationMs: current.durationMs + durationDelta * VIEWPORT_EASING
+    };
+    setViewportVersion((value) => value + 1);
+    viewportAnimationFrameRef.current = requestAnimationFrame(animateViewport);
+  };
+
   const updateViewport = (nextStart: number, nextDuration: number) => {
     const clampedDuration = clamp(nextDuration, MIN_VIEWPORT_MS, Math.min(MAX_VIEWPORT_MS, durationMs));
     const maxStart = Math.max(0, durationMs - clampedDuration);
     const clampedStart = clamp(nextStart, 0, Math.max(0, maxStart));
-    viewportRef.current = {
+
+    const pointerDelta = Math.max(
+      Math.abs(clampedStart - targetViewportRef.current.startMs),
+      Math.abs(clampedDuration - targetViewportRef.current.durationMs)
+    );
+    if (pointerDelta < 0.01) {
+      return;
+    }
+
+    targetViewportRef.current = {
       startMs: clampedStart,
       durationMs: clampedDuration
     };
-    setViewportVersion((value) => value + 1);
+
+    if (viewportAnimationFrameRef.current === null) {
+      viewportAnimationFrameRef.current = requestAnimationFrame(animateViewport);
+    }
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (event.button === 2) {
+      clickContextRef.current = null;
       const canvas = canvasRef.current;
       if (canvas) {
         canvas.setPointerCapture(event.pointerId);
@@ -213,6 +438,7 @@ export function WaveformEditorCanvas({
     if (canvas) {
       canvas.setPointerCapture(event.pointerId);
     }
+    clickContextRef.current = { startMs: pointerMs, insideSegmentId: null };
 
     const viewport = viewportRef.current;
     const toleranceMs = viewport.durationMs * (HANDLE_WIDTH_PX / Math.max(canvas?.clientWidth ?? 1, 1));
@@ -221,13 +447,15 @@ export function WaveformEditorCanvas({
     if (hit) {
       onSelectSegment(hit.segmentId);
       dragStateRef.current = { type: 'resizing', segmentId: hit.segmentId, handle: hit.handle };
+      clickContextRef.current = null;
       return;
     }
 
-    const containing = segments.find((segment) => pointerMs >= segment.startMs && pointerMs <= segment.endMs);
+    const containing = pickSegmentAtMs(pointerMs, segments);
     if (containing) {
       onSelectSegment(containing.id);
       dragStateRef.current = { type: 'none' };
+      clickContextRef.current = { startMs: pointerMs, insideSegmentId: containing.id };
       return;
     }
 
@@ -237,6 +465,86 @@ export function WaveformEditorCanvas({
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const state = dragStateRef.current;
+    
+    // Update cursor position for display (works during drag too)
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const ms = resolveClientToMs(event.clientX);
+      targetCursorXRef.current = x;
+      targetCursorMsRef.current = ms;
+      setCursorX(x);
+      setCursorMs(ms);
+      
+      if (animationFrameRef.current === null) {
+        const animate = () => {
+          const targetX = targetCursorXRef.current;
+          const targetMs = targetCursorMsRef.current;
+          
+          if (targetX === null || targetMs === null) {
+            setCursorX(null);
+            setCursorMs(null);
+            animationFrameRef.current = null;
+            return;
+          }
+
+          let needsUpdate = false;
+
+          setCursorX((currentX) => {
+            if (currentX === null) {
+              needsUpdate = true;
+              return targetX;
+            }
+            const delta = targetX - currentX;
+            const distance = Math.abs(delta);
+            
+            const progress = 1 - (distance / 200);
+            const easedProgress = Math.max(0, Math.min(1, progress));
+            const speed = 0.08 + (easedProgress * easedProgress * easedProgress) * 0.25;
+            const newX = currentX + delta * speed;
+            
+            if (Math.abs(targetX - newX) < 0.5) {
+              return targetX;
+            }
+            needsUpdate = true;
+            return newX;
+          });
+
+          setCursorMs((currentMs) => {
+            if (currentMs === null) {
+              return targetMs;
+            }
+            const delta = targetMs - currentMs;
+            const distance = Math.abs(delta);
+            
+            const progress = 1 - (distance / 300);
+            const easedProgress = Math.max(0, Math.min(1, progress));
+            const speed = 0.08 + (easedProgress * easedProgress * easedProgress) * 0.25;
+            const newMs = currentMs + delta * speed;
+            
+            if (Math.abs(targetMs - newMs) < 0.5) {
+              return targetMs;
+            }
+            return newMs;
+          });
+
+          if (needsUpdate || targetCursorXRef.current !== null) {
+            animationFrameRef.current = requestAnimationFrame(animate);
+          } else {
+            animationFrameRef.current = null;
+          }
+        };
+        
+        animationFrameRef.current = requestAnimationFrame(animate);
+      }
+      
+      // Check segment hover
+      const overlapping = segments.filter((segment) => ms >= segment.startMs && ms <= segment.endMs);
+      const hovered = pickSegmentAtMs(ms, segments);
+      setHoveredSegmentId(hovered ? hovered.id : null);
+    }
+    
     if (state.type === 'none') {
       return;
     }
@@ -293,8 +601,17 @@ export function WaveformEditorCanvas({
       const start = Math.min(state.anchorMs, pointerMs);
       const end = Math.max(state.anchorMs, pointerMs);
       setDraftSelection(null);
-      if (end - start >= MIN_SEGMENT_MS) {
+      const delta = Math.abs(end - start);
+      if (delta >= MIN_SEGMENT_MS) {
         onCreateSegment(start, end);
+        clickContextRef.current = null;
+        return;
+      }
+      // If drag was too small, treat as a click to play from cursor
+      const clickContext = clickContextRef.current;
+      clickContextRef.current = null;
+      if (clickContext) {
+        onPlayFromCursor(clickContext.startMs);
       }
       return;
     }
@@ -306,6 +623,21 @@ export function WaveformEditorCanvas({
     if (state.type === 'resizing') {
       // Final adjustment already applied during move.
       return;
+    }
+
+    const clickContext = clickContextRef.current;
+    clickContextRef.current = null;
+    if (state.type === 'none' && clickContext && !clickContext.insideSegmentId) {
+      const pointerMs = resolvePointerMs(event);
+      const delta = Math.abs(pointerMs - clickContext.startMs);
+      const viewport = viewportRef.current;
+      const toleranceMs = Math.max(CLICK_TOLERANCE_MS, viewport.durationMs * 0.002);
+      if (delta <= toleranceMs) {
+        if (event.detail > 1) {
+          return;
+        }
+        onPlayFromCursor(clickContext.startMs);
+      }
     }
   };
 
@@ -331,6 +663,23 @@ export function WaveformEditorCanvas({
   const handleDoubleClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
     event.preventDefault();
     const pointerMs = resolveClientToMs(event.clientX);
+    const targetSegment = pickSegmentAtMs(pointerMs, segments);
+    if (targetSegment) {
+      const segmentSpan = Math.max(targetSegment.endMs - targetSegment.startMs, 1);
+      const paddedSpan = clamp(segmentSpan * 1.1, MIN_VIEWPORT_MS, durationMs);
+      const padding = Math.max(0, (paddedSpan - segmentSpan) / 2);
+      let nextStart = targetSegment.startMs - padding;
+      let nextDuration = paddedSpan;
+      if (nextStart < 0) {
+        nextStart = 0;
+      }
+      if (nextStart + nextDuration > durationMs) {
+        nextStart = Math.max(0, durationMs - nextDuration);
+      }
+      updateViewport(nextStart, nextDuration);
+      return;
+    }
+
     const viewport = viewportRef.current;
     const windowSpan = viewport.durationMs * 0.25;
     const nextDuration = clamp(windowSpan, MIN_VIEWPORT_MS, durationMs);
@@ -342,6 +691,113 @@ export function WaveformEditorCanvas({
     event.preventDefault();
   };
 
+  const handleMouseMove = (event: ReactMouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const ms = resolveClientToMs(event.clientX);
+    
+    // Set target values for smooth animation
+    targetCursorXRef.current = x;
+    targetCursorMsRef.current = ms;
+    setCursorX(x);
+    setCursorMs(ms);
+    setCursorX(x);
+    setCursorMs(ms);
+    
+    // Start animation if not already running
+    if (animationFrameRef.current === null) {
+      const animate = () => {
+        const targetX = targetCursorXRef.current;
+        const targetMs = targetCursorMsRef.current;
+        
+        if (targetX === null || targetMs === null) {
+          setCursorX(null);
+          setCursorMs(null);
+          animationFrameRef.current = null;
+          return;
+        }
+
+        let needsUpdate = false;
+
+        setCursorX((currentX) => {
+          if (currentX === null) {
+            needsUpdate = true;
+            return targetX;
+          }
+          const delta = targetX - currentX;
+          const distance = Math.abs(delta);
+          
+          // Ease-in cubic for tape acceleration feel (starts slow, speeds up)
+          const progress = 1 - (distance / 200); // Normalize distance
+          const easedProgress = Math.max(0, Math.min(1, progress));
+          const speed = 0.08 + (easedProgress * easedProgress * easedProgress) * 0.25;
+          const newX = currentX + delta * speed;
+          
+          if (Math.abs(targetX - newX) < 0.5) {
+            return targetX;
+          }
+          needsUpdate = true;
+          return newX;
+        });
+
+        setCursorMs((currentMs) => {
+          if (currentMs === null) {
+            return targetMs;
+          }
+          const delta = targetMs - currentMs;
+          const distance = Math.abs(delta);
+          
+          // Ease-in cubic for tape acceleration feel
+          const progress = 1 - (distance / 300);
+          const easedProgress = Math.max(0, Math.min(1, progress));
+          const speed = 0.08 + (easedProgress * easedProgress * easedProgress) * 0.25;
+          const newMs = currentMs + delta * speed;
+          
+          if (Math.abs(targetMs - newMs) < 0.5) {
+            return targetMs;
+          }
+          return newMs;
+        });
+
+        if (needsUpdate || targetCursorXRef.current !== null) {
+          animationFrameRef.current = requestAnimationFrame(animate);
+        } else {
+          animationFrameRef.current = null;
+        }
+      };
+      
+      animationFrameRef.current = requestAnimationFrame(animate);
+    }
+
+    // Check if hovering over a segment, prefer the one whose center is closest to pointer
+    const hovered = pickSegmentAtMs(ms, segments);
+    setHoveredSegmentId(hovered ? hovered.id : null);
+  };
+
+  const handleMouseLeave = () => {
+    targetCursorXRef.current = null;
+    targetCursorMsRef.current = null;
+    setCursorX(null);
+    setCursorMs(null);
+    setHoveredSegmentId(null);
+    clickContextRef.current = null;
+  };
+
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (viewportAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(viewportAnimationFrameRef.current);
+      }
+    };
+  }, []);
+
   return (
     <canvas
       ref={canvasRef}
@@ -349,6 +805,8 @@ export function WaveformEditorCanvas({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
       onWheel={handleWheel}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
@@ -387,6 +845,46 @@ function findSegmentHandle(
     }
   }
   return null;
+}
+
+/**
+ * Determine which segment should be chosen for interaction at the supplied timestamp.
+ * Prefers the segment whose midpoint is closest to the pointer when multiple segments overlap.
+ *
+ * @param pointerMs - Absolute timestamp within the audio file to test.
+ * @param segments - Segment collection to evaluate.
+ * @returns The best matching segment or null when no segments cover the timestamp.
+ */
+function pickSegmentAtMs(pointerMs: number, segments: SegmentDraft[]): SegmentDraft | null {
+  const overlapping = segments.filter((segment) => pointerMs >= segment.startMs && pointerMs <= segment.endMs);
+  if (overlapping.length === 0) {
+    return null;
+  }
+  let best = overlapping[0];
+  let bestDistance = Math.abs(pointerMs - ((best.startMs + best.endMs) / 2));
+  for (let index = 1; index < overlapping.length; index += 1) {
+    const candidate = overlapping[index];
+    const candidateCenter = (candidate.startMs + candidate.endMs) / 2;
+    const candidateDistance = Math.abs(pointerMs - candidateCenter);
+    if (candidateDistance < bestDistance) {
+      best = candidate;
+      bestDistance = candidateDistance;
+    }
+  }
+  return best;
+}
+
+function formatTimecode(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return '00:00.000';
+  }
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const milliseconds = Math.floor(ms % 1000);
+  return `${minutes.toString().padStart(2, '0')}:${seconds
+    .toString()
+    .padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
 }
 
 export default WaveformEditorCanvas;

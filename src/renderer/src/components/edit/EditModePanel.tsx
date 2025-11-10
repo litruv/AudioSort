@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AudioFileSummary, CategoryRecord } from '../../../../shared/models';
 import { TagEditor } from '../TagEditor';
 import WaveformEditorCanvas from './WaveformEditorCanvas';
@@ -18,6 +18,25 @@ export interface EditModePanelProps {
 
 const MIN_SEGMENT_MS = 50;
 
+type PlaybackMode = 'segment' | 'cursor';
+
+interface PlaybackInfo {
+  mode: PlaybackMode;
+  startMs: number;
+  endMs: number | null;
+  label: string;
+  segmentId: string | null;
+  pausedOffsetMs: number;
+}
+
+interface PlaybackUiState {
+  mode: PlaybackMode;
+  label: string;
+  startMs: number;
+  endMs: number | null;
+  isPlaying: boolean;
+}
+
 /**
  * Full-screen overlay that enables waveform driven segment editing and metadata assignment before splitting.
  */
@@ -32,6 +51,228 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
   const [baseMetadata, setBaseMetadata] = useState<{ author: string | null; rating: number | null }>(
     () => ({ author: null, rating: null })
   );
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioBufferRef = useRef<AudioBuffer | null>(null);
+  const audioBufferPromiseRef = useRef<Promise<AudioBuffer | null> | null>(null);
+  const activeSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const playbackStartTimeRef = useRef<number | null>(null);
+  const playbackInfoRef = useRef<PlaybackInfo | null>(null);
+  const activePlaybackIdRef = useRef<string | null>(null);
+  const lastSegmentPlayRef = useRef<{ segmentId: string; timestamp: number } | null>(null);
+  const playbackCursorFrameRef = useRef<number | null>(null);
+  const [playbackCursorMs, setPlaybackCursorMs] = useState<number | null>(null);
+  const [playbackUi, setPlaybackUi] = useState<PlaybackUiState | null>(null);
+
+  const ensureAudioContext = useCallback((): AudioContext | null => {
+    if (audioContextRef.current) {
+      return audioContextRef.current;
+    }
+    const globalWindow = window as typeof window & { webkitAudioContext?: typeof AudioContext };
+    const AudioContextCtor = globalWindow.AudioContext ?? globalWindow.webkitAudioContext;
+    if (!AudioContextCtor) {
+      setWaveformError((current) => current ?? 'Audio playback is not supported in this environment.');
+      return null;
+    }
+    audioContextRef.current = new AudioContextCtor();
+    return audioContextRef.current;
+  }, []);
+
+  const stopActiveSource = useCallback(() => {
+    const source = activeSourceRef.current;
+    if (!source) {
+      return;
+    }
+    source.onended = null;
+    try {
+      source.stop();
+    } catch (error) {
+      // Ignore errors when the source has already completed playback.
+    }
+    source.disconnect();
+    activeSourceRef.current = null;
+  }, []);
+
+  const stopPlaybackCursorTracking = useCallback((options?: { preservePosition?: boolean }) => {
+    if (playbackCursorFrameRef.current !== null) {
+      cancelAnimationFrame(playbackCursorFrameRef.current);
+      playbackCursorFrameRef.current = null;
+    }
+    if (!options?.preservePosition) {
+      setPlaybackCursorMs(null);
+    }
+  }, []);
+
+  const schedulePlaybackCursorUpdate = useCallback(() => {
+    const context = audioContextRef.current;
+    const info = playbackInfoRef.current;
+    if (!context || !info || playbackStartTimeRef.current === null) {
+      stopPlaybackCursorTracking();
+      return;
+    }
+
+    const elapsedMs = Math.max(0, (context.currentTime - playbackStartTimeRef.current) * 1000);
+    const buffer = audioBufferRef.current;
+    const bufferDurationMs = buffer ? buffer.duration * 1000 : Number.POSITIVE_INFINITY;
+    const absoluteEndMs = info.endMs ?? bufferDurationMs;
+    const position = info.startMs + info.pausedOffsetMs + elapsedMs;
+    const clampedPosition = Math.min(position, absoluteEndMs);
+    setPlaybackCursorMs(clampedPosition);
+
+    if (position >= absoluteEndMs) {
+      stopPlaybackCursorTracking({ preservePosition: true });
+      return;
+    }
+
+    playbackCursorFrameRef.current = window.requestAnimationFrame(schedulePlaybackCursorUpdate);
+  }, [stopPlaybackCursorTracking]);
+
+  const cancelPlayback = useCallback(() => {
+    stopActiveSource();
+    activePlaybackIdRef.current = null;
+    playbackStartTimeRef.current = null;
+    playbackInfoRef.current = null;
+    stopPlaybackCursorTracking();
+    setPlaybackUi(null);
+  }, [stopActiveSource, stopPlaybackCursorTracking]);
+
+  const loadAudioBuffer = useCallback(async (): Promise<AudioBuffer | null> => {
+    if (audioBufferRef.current) {
+      return audioBufferRef.current;
+    }
+    if (audioBufferPromiseRef.current) {
+      return audioBufferPromiseRef.current;
+    }
+    const context = ensureAudioContext();
+    if (!context) {
+      return null;
+    }
+    const promise = (async () => {
+      try {
+  const payload = await window.api.getAudioBuffer(file.id);
+  const buffer = await context.decodeAudioData(payload.buffer.slice(0));
+  audioBufferRef.current = buffer;
+  return buffer;
+      } catch (error) {
+        console.error('Failed to decode audio buffer for playback', error);
+        return null;
+      } finally {
+        audioBufferPromiseRef.current = null;
+      }
+    })();
+    audioBufferPromiseRef.current = promise;
+    return promise;
+  }, [ensureAudioContext, file.id]);
+
+  const beginPlayback = useCallback(
+    async (request: PlaybackInfo) => {
+      try {
+        const buffer = await loadAudioBuffer();
+        if (!buffer) {
+          return;
+        }
+        const context = ensureAudioContext();
+        if (!context) {
+          return;
+        }
+        await context.resume();
+
+        stopActiveSource();
+
+        const bufferDurationMs = buffer.duration * 1000;
+        const absoluteEndMs = request.endMs ?? bufferDurationMs;
+        const playbackStartMs = request.startMs + request.pausedOffsetMs;
+        if (playbackStartMs >= absoluteEndMs) {
+          return;
+        }
+
+        const id = generatePlaybackId();
+        const playbackLengthMs = absoluteEndMs - playbackStartMs;
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        source.start(0, playbackStartMs / 1000, playbackLengthMs / 1000);
+
+        playbackInfoRef.current = { ...request };
+        activePlaybackIdRef.current = id;
+        playbackStartTimeRef.current = context.currentTime;
+        activeSourceRef.current = source;
+        stopPlaybackCursorTracking({ preservePosition: true });
+        setPlaybackCursorMs(request.startMs + request.pausedOffsetMs);
+        schedulePlaybackCursorUpdate();
+        
+        setPlaybackUi({
+          mode: request.mode,
+          label: request.label,
+          startMs: request.startMs,
+          endMs: request.endMs,
+          isPlaying: true
+        });
+
+        source.onended = () => {
+          if (activePlaybackIdRef.current === id) {
+            const infoSnapshot = playbackInfoRef.current;
+            const buffer = audioBufferRef.current;
+            const bufferDurationMs = buffer ? buffer.duration * 1000 : Number.POSITIVE_INFINITY;
+            const finalPosition = infoSnapshot ? (infoSnapshot.endMs ?? bufferDurationMs) : null;
+            if (finalPosition !== null && Number.isFinite(finalPosition)) {
+              setPlaybackCursorMs(finalPosition);
+            }
+            stopPlaybackCursorTracking({ preservePosition: true });
+            activePlaybackIdRef.current = null;
+            playbackStartTimeRef.current = null;
+            playbackInfoRef.current = null;
+            activeSourceRef.current = null;
+            setPlaybackUi(null);
+          }
+        };
+      } catch (error) {
+        console.error('Playback start failed', error);
+        stopPlaybackCursorTracking();
+      }
+    },
+    [ensureAudioContext, loadAudioBuffer, stopActiveSource, schedulePlaybackCursorUpdate, stopPlaybackCursorTracking]
+  );
+
+  const pausePlayback = useCallback(() => {
+    const info = playbackInfoRef.current;
+    const context = audioContextRef.current;
+    if (!info || !context) {
+      return;
+    }
+    if (activePlaybackIdRef.current === null || playbackStartTimeRef.current === null) {
+      return;
+    }
+    const elapsedMs = (context.currentTime - playbackStartTimeRef.current) * 1000;
+    const bufferDurationMs = audioBufferRef.current ? audioBufferRef.current.duration * 1000 : Number.POSITIVE_INFINITY;
+    const absoluteEndMs = info.endMs ?? bufferDurationMs;
+    const nextOffset = Math.min(absoluteEndMs - info.startMs, info.pausedOffsetMs + elapsedMs);
+    const absolutePosition = info.startMs + nextOffset;
+    playbackInfoRef.current = { ...info, pausedOffsetMs: nextOffset };
+    activePlaybackIdRef.current = null;
+    playbackStartTimeRef.current = null;
+    stopActiveSource();
+    stopPlaybackCursorTracking({ preservePosition: true });
+    setPlaybackCursorMs(absolutePosition);
+    setPlaybackUi((current) => (current ? { ...current, isPlaying: false } : current));
+  }, [stopActiveSource, stopPlaybackCursorTracking]);
+
+  const resumePlayback = useCallback(() => {
+    const info = playbackInfoRef.current;
+    if (!info) {
+      return;
+    }
+    beginPlayback(info);
+  }, [beginPlayback]);
+
+  const togglePlayback = useCallback(() => {
+    if (activePlaybackIdRef.current) {
+      pausePlayback();
+      return;
+    }
+    if (playbackInfoRef.current) {
+      resumePlayback();
+    }
+  }, [pausePlayback, resumePlayback]);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,41 +323,29 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
   }, [file.id]);
 
   useEffect(() => {
-    if (durationMs !== null) {
-      return;
-    }
     let cancelled = false;
     (async () => {
-      try {
-        const payload = await window.api.getAudioBuffer(file.id);
-        const AudioContextCtor = (window as typeof window & { webkitAudioContext?: typeof AudioContext }).AudioContext
-          ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!AudioContextCtor) {
-          if (!cancelled) {
-            setDurationMs(file.durationMs ?? null);
-          }
-          return;
-        }
-        const context = new AudioContextCtor();
-        try {
-          const buffer = await context.decodeAudioData(payload.buffer.slice(0));
-          if (!cancelled) {
-            setDurationMs(Math.round(buffer.duration * 1000));
-          }
-        } finally {
-          await context.close();
-        }
-      } catch (error) {
-        console.error('Failed to decode audio buffer for duration', error);
-        if (!cancelled) {
-          setDurationMs(null);
-        }
+      const buffer = await loadAudioBuffer();
+      if (cancelled || !buffer) {
+        return;
       }
+      setDurationMs((current) => (current === null ? Math.round(buffer.duration * 1000) : current));
     })();
     return () => {
       cancelled = true;
     };
-  }, [file.id, durationMs]);
+  }, [loadAudioBuffer]);
+
+  useEffect(() => {
+    return () => {
+      cancelPlayback();
+      const context = audioContextRef.current;
+      if (context) {
+        context.close().catch(() => undefined);
+        audioContextRef.current = null;
+      }
+    };
+  }, [cancelPlayback]);
 
   const selectedSegment = useMemo(
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? null,
@@ -125,6 +354,43 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
 
   const isWaveformReady = waveformSamples !== null && durationMs !== null;
   const effectiveDuration = durationMs ?? 0;
+
+  const playSegment = useCallback(
+    (segment: SegmentDraft) => {
+      const trimmedLabel = segment.label.trim();
+      const label = trimmedLabel.length > 0
+        ? trimmedLabel
+        : `${formatTimecode(segment.startMs)} → ${formatTimecode(segment.endMs)}`;
+      beginPlayback({
+        mode: 'segment',
+        startMs: segment.startMs,
+        endMs: segment.endMs,
+        label,
+        segmentId: segment.id,
+        pausedOffsetMs: 0
+      });
+    },
+    [beginPlayback]
+  );
+
+  const playFromCursor = useCallback(
+    (startMs: number) => {
+      beginPlayback({
+        mode: 'cursor',
+        startMs,
+        endMs: null,
+        label: `From ${formatTimecode(startMs)}`,
+        segmentId: null,
+        pausedOffsetMs: 0
+      });
+    },
+    [beginPlayback]
+  );
+
+  const handleClose = useCallback(() => {
+    cancelPlayback();
+    onClose();
+  }, [cancelPlayback, onClose]);
 
   const handleCreateSegment = (rawStart: number, rawEnd: number) => {
     if (!isWaveformReady) {
@@ -136,13 +402,15 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
       startMs: start,
       endMs: end,
       label: `Segment ${segments.length + 1}`,
-      metadata: buildDefaultMetadata(file, baseMetadata)
+      metadata: buildDefaultMetadata(file, baseMetadata),
+      color: generateSegmentColor(segments.length)
     };
     setSegments((current) => {
       const next = [...current, newSegment].sort((a, b) => a.startMs - b.startMs);
       return next;
     });
     setSelectedSegmentId(newSegment.id);
+    playSegment(newSegment);
   };
 
   const handleResizeSegment = (segmentId: string, rawStart: number, rawEnd: number) => {
@@ -161,9 +429,29 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
     });
   };
 
-  const handleSelectSegment = (segmentId: string | null) => {
+  const handleSelectSegment = useCallback((segmentId: string | null) => {
     setSelectedSegmentId(segmentId);
-  };
+    if (!segmentId) {
+      return;
+    }
+    const segment = segments.find((entry) => entry.id === segmentId);
+    if (segment) {
+      const now = performance.now();
+      const lastPlay = lastSegmentPlayRef.current;
+      const recentlyStartedSameSegment =
+        lastPlay &&
+        lastPlay.segmentId === segmentId &&
+        now - lastPlay.timestamp < 500;
+      
+      if (!recentlyStartedSameSegment) {
+        playSegment(segment);
+        lastSegmentPlayRef.current = {
+          segmentId,
+          timestamp: now
+        };
+      }
+    }
+  }, [segments, playSegment]);
 
   const handleUpdateLabel = (segmentId: string, label: string) => {
     setSegments((current) =>
@@ -175,12 +463,13 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
     );
   };
 
-  const handleRemoveSegment = (segmentId: string) => {
+  const handleRemoveSegment = useCallback((segmentId: string) => {
     setSegments((current) => current.filter((segment) => segment.id !== segmentId));
-    if (selectedSegmentId === segmentId) {
-      setSelectedSegmentId(null);
+    setSelectedSegmentId((current) => (current === segmentId ? null : current));
+    if (playbackInfoRef.current?.segmentId === segmentId) {
+      cancelPlayback();
     }
-  };
+  }, [cancelPlayback]);
 
   const handleMetadataPatch = (segmentId: string, patch: Partial<SegmentMetadataDraft>) => {
     setSegments((current) =>
@@ -192,10 +481,43 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
     );
   };
 
-  const handleTagSave = (segmentId: string, data: { tags: string[]; categories: string[] }) => {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const activeElement = document.activeElement;
+      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.getAttribute('contenteditable') === 'true')) {
+        return;
+      }
+
+      if (event.key === 'Delete') {
+        if (selectedSegmentId) {
+          event.preventDefault();
+          handleRemoveSegment(selectedSegmentId);
+        }
+        return;
+      }
+
+      if (event.code === 'Space' || event.key === ' ') {
+        event.preventDefault();
+        if (playbackInfoRef.current) {
+          togglePlayback();
+        } else if (selectedSegmentId) {
+          const segment = segments.find((seg) => seg.id === selectedSegmentId);
+          if (segment) {
+            playSegment(segment);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedSegmentId, segments, handleRemoveSegment, togglePlayback, playSegment]);
+
+  const handleCategorySave = (segmentId: string, categories: string[]) => {
     handleMetadataPatch(segmentId, {
-      tags: data.tags,
-      categories: data.categories
+      categories
     });
   };
 
@@ -209,7 +531,7 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
       const payload = segments.map((segment) => toSplitRequest(segment));
       const created = await libraryStore.splitFile(file.id, payload);
       onSplitComplete(created);
-      onClose();
+      handleClose();
     } catch (error) {
       console.error('Split operation failed', error);
       setSubmitError(error instanceof Error ? error.message : String(error));
@@ -227,26 +549,78 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
             <p>{file.relativePath}</p>
           </div>
           <div className="edit-mode-header-actions">
-            <button type="button" className="ghost-button" onClick={onClose}>Close</button>
+            <button type="button" className="ghost-button" onClick={handleClose}>Close</button>
           </div>
         </header>
         <div className="edit-mode-body">
-          <div className="edit-mode-waveform">
-            {waveformError && <div className="edit-mode-error">{waveformError}</div>}
-            {!waveformError && !isWaveformReady && (
-              <div className="edit-mode-placeholder">Loading waveform…</div>
-            )}
-            {!waveformError && isWaveformReady && waveformSamples && (
-              <WaveformEditorCanvas
-                samples={waveformSamples}
-                durationMs={effectiveDuration}
-                segments={segments}
-                selectedSegmentId={selectedSegmentId}
-                onSelectSegment={handleSelectSegment}
-                onCreateSegment={handleCreateSegment}
-                onResizeSegment={handleResizeSegment}
-              />
-            )}
+          <div className="edit-mode-waveform-container">
+            <div className="edit-mode-waveform">
+              {waveformError && <div className="edit-mode-error">{waveformError}</div>}
+              {!waveformError && !isWaveformReady && (
+                <div className="edit-mode-placeholder">Loading waveform…</div>
+              )}
+              {!waveformError && isWaveformReady && waveformSamples && (
+                <WaveformEditorCanvas
+                  samples={waveformSamples}
+                  durationMs={effectiveDuration}
+                  segments={segments}
+                  selectedSegmentId={selectedSegmentId}
+                  onSelectSegment={handleSelectSegment}
+                  onCreateSegment={handleCreateSegment}
+                  onResizeSegment={handleResizeSegment}
+                  onPlayFromCursor={playFromCursor}
+                  playbackCursorMs={playbackCursorMs}
+                />
+              )}
+            </div>
+            <div className="edit-mode-playback-controls">
+              {playbackUi ? (
+                <>
+                  <button
+                    type="button"
+                    className="ghost-button edit-mode-playback-toggle"
+                    onClick={togglePlayback}
+                  >
+                    {playbackUi.isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+                  </button>
+                  <div className="edit-mode-playback-details">
+                    <span className="edit-mode-playback-title">{playbackUi.label}</span>
+                    <span className="edit-mode-playback-range">
+                      {formatTimecode(playbackUi.startMs)}
+                      {' → '}
+                      {formatTimecode(playbackUi.endMs ?? effectiveDuration)}
+                      {playbackUi.endMs === null ? ' (end)' : ''}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {selectedSegment ? (
+                    <>
+                      <button
+                        type="button"
+                        className="ghost-button edit-mode-playback-toggle"
+                        onClick={() => playSegment(selectedSegment)}
+                      >
+                        Play (Space)
+                      </button>
+                      <div className="edit-mode-playback-details">
+                        <span className="edit-mode-playback-title">
+                          {selectedSegment.label.trim() || `${formatTimecode(selectedSegment.startMs)} → ${formatTimecode(selectedSegment.endMs)}`}
+                        </span>
+                        <span className="edit-mode-playback-range">
+                          {formatTimecode(selectedSegment.startMs)}
+                          {' → '}
+                          {formatTimecode(selectedSegment.endMs)}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="edit-mode-playback-idle">No segment selected</div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
           <aside className="edit-mode-sidebar">
             <section className="segment-list">
@@ -260,6 +634,7 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
                 <ul>
                   {segments.map((segment) => (
                     <li key={segment.id} className={segment.id === selectedSegmentId ? 'segment-item segment-item--selected' : 'segment-item'}>
+                      <span className="segment-color-indicator" style={{ backgroundColor: segment.color }} />
                       <button
                         type="button"
                         className="segment-item-select"
@@ -268,15 +643,65 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
                       >
                         <span className="segment-item-time">{formatTimecode(segment.startMs)} – {formatTimecode(segment.endMs)}</span>
                       </button>
-                      <input
-                        type="text"
-                        value={segment.label}
-                        onChange={(event) => handleUpdateLabel(segment.id, event.target.value)}
-                        placeholder="Label"
-                      />
-                      <button type="button" className="ghost-button segment-item-remove" onClick={() => handleRemoveSegment(segment.id)}>
-                        Remove
-                      </button>
+                      <div className="segment-item-label-row">
+                        <input
+                          type="text"
+                          value={segment.label}
+                          onChange={(event) => handleUpdateLabel(segment.id, event.target.value)}
+                          placeholder="Segment Name"
+                        />
+                        {segment.id === selectedSegmentId && (
+                          <button
+                            type="button"
+                            className="segment-item-delete"
+                            onClick={() => handleRemoveSegment(segment.id)}
+                            aria-label="Delete segment"
+                            title="Delete segment"
+                          >
+                            🗑️
+                          </button>
+                        )}
+                      </div>
+                      {segment.id === selectedSegmentId && (
+                        <div className="segment-item-metadata">
+                          <label className="segment-field">
+                            <span>Author</span>
+                            <input
+                              type="text"
+                              value={segment.metadata.author ?? ''}
+                              onChange={(event) => handleMetadataPatch(segment.id, { author: normaliseText(event.target.value) })}
+                              placeholder="Artist or creator"
+                            />
+                          </label>
+                          <div className="segment-field">
+                            <span>Rating</span>
+                            <div className="star-rating">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <button
+                                  key={star}
+                                  type="button"
+                                  className={segment.metadata.rating !== null && segment.metadata.rating >= star ? 'star star--filled' : 'star'}
+                                  onClick={() => handleMetadataPatch(segment.id, {
+                                    rating: segment.metadata.rating === star ? null : star
+                                  })}
+                                  aria-label={`${star} star${star > 1 ? 's' : ''}`}
+                                >
+                                  ★
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="segment-field">
+                            <span>Categories</span>
+                            <TagEditor
+                              categories={segment.metadata.categories}
+                              availableCategories={categories}
+                              onSave={(nextCategories) => handleCategorySave(segment.id, nextCategories)}
+                              showHeading={false}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -285,52 +710,7 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
             <section className="segment-metadata">
               <h2>Metadata</h2>
               {selectedSegment ? (
-                <>
-                  <label className="segment-field">
-                    <span>Custom Name</span>
-                    <input
-                      type="text"
-                      value={selectedSegment.metadata.customName ?? ''}
-                      onChange={(event) => handleMetadataPatch(selectedSegment.id, { customName: normaliseText(event.target.value) })}
-                      placeholder="Optional custom title"
-                    />
-                  </label>
-                  <label className="segment-field">
-                    <span>Author</span>
-                    <input
-                      type="text"
-                      value={selectedSegment.metadata.author ?? ''}
-                      onChange={(event) => handleMetadataPatch(selectedSegment.id, { author: normaliseText(event.target.value) })}
-                      placeholder="Artist or creator"
-                    />
-                  </label>
-                  <div className="segment-field">
-                    <span>Rating</span>
-                    <div className="star-rating">
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <button
-                          key={star}
-                          type="button"
-                          className={selectedSegment.metadata.rating !== null && selectedSegment.metadata.rating >= star ? 'star star--filled' : 'star'}
-                          onClick={() => handleMetadataPatch(selectedSegment.id, {
-                            rating:
-                              selectedSegment.metadata.rating === star ? null : star
-                          })}
-                          aria-label={`${star} star${star > 1 ? 's' : ''}`}
-                        >
-                          ★
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <TagEditor
-                    tags={selectedSegment.metadata.tags}
-                    categories={selectedSegment.metadata.categories}
-                    availableCategories={categories}
-                    onSave={(data) => handleTagSave(selectedSegment.id, data)}
-                    showHeading={false}
-                  />
-                </>
+                <p className="segment-metadata-helper">Edit segment metadata in the segment list above.</p>
               ) : (
                 <p className="segment-metadata-empty">Select a segment to edit its metadata.</p>
               )}
@@ -340,7 +720,7 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
         <footer className="edit-mode-footer">
           {submitError && <span className="edit-mode-error">{submitError}</span>}
           <div className="edit-mode-footer-actions">
-            <button type="button" className="ghost-button" onClick={onClose} disabled={isSaving}>Cancel</button>
+            <button type="button" className="ghost-button" onClick={handleClose} disabled={isSaving}>Cancel</button>
             <button
               type="button"
               className="primary-button"
@@ -366,12 +746,19 @@ function normaliseRange(start: number, end: number, duration: number): { start: 
   return { start: safeStart, end: safeEnd };
 }
 
+function generatePlaybackId(): string {
+  if (typeof window !== 'undefined' && window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return `playback-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function buildDefaultMetadata(
   file: AudioFileSummary,
   baseMetadata: { author: string | null; rating: number | null }
 ): SegmentMetadataDraft {
   return {
-    customName: file.customName ?? null,
+    customName: null,
     author: baseMetadata.author,
     rating: baseMetadata.rating,
     tags: file.tags.slice(),
@@ -384,6 +771,46 @@ function generateSegmentId(): string {
     return window.crypto.randomUUID();
   }
   return `segment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function generateSegmentColor(index: number): string {
+  // Use 36-degree spacing on hue wheel (360/36 = 10 unique colors per cycle)
+  const hue = (index * 36) % 360;
+  const saturation = 70;
+  const lightness = 65;
+  return hslToHex(hue, saturation, lightness);
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const sNorm = s / 100;
+  const lNorm = l / 100;
+  const c = (1 - Math.abs(2 * lNorm - 1)) * sNorm;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = lNorm - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  
+  if (h >= 0 && h < 60) {
+    r = c; g = x; b = 0;
+  } else if (h >= 60 && h < 120) {
+    r = x; g = c; b = 0;
+  } else if (h >= 120 && h < 180) {
+    r = 0; g = c; b = x;
+  } else if (h >= 180 && h < 240) {
+    r = 0; g = x; b = c;
+  } else if (h >= 240 && h < 300) {
+    r = x; g = 0; b = c;
+  } else if (h >= 300 && h < 360) {
+    r = c; g = 0; b = x;
+  }
+  
+  const toHex = (n: number) => {
+    const hex = Math.round((n + m) * 255).toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  };
+  
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
 function normaliseText(value: string): string | null {

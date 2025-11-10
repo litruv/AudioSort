@@ -30,18 +30,29 @@ export interface SegmentDraft {
   label: string;
   /** Captured metadata overrides. */
   metadata: SegmentMetadataDraft;
+  /** Color used for visual identification in UI and waveform. */
+  color: string;
 }
 
 /**
  * Converts a draft segment into the IPC request payload.
  */
 export function toSplitRequest(segment: SegmentDraft): SplitSegmentRequest {
+  const trimmedLabel = segment.label.trim();
+  const effectiveLabel = trimmedLabel.length > 0 ? trimmedLabel : undefined;
+  
+  // Only include customName in metadata if it differs from the label
+  // This allows the backend to use the label as the customName by default
+  const customNameOverride = segment.metadata.customName !== null && segment.metadata.customName !== trimmedLabel
+    ? segment.metadata.customName
+    : undefined;
+  
   return {
     startMs: Math.round(segment.startMs),
     endMs: Math.round(segment.endMs),
-    label: segment.label.trim().length > 0 ? segment.label.trim() : undefined,
+    label: effectiveLabel,
     metadata: {
-      customName: segment.metadata.customName,
+      customName: customNameOverride,
       author: segment.metadata.author,
       rating: segment.metadata.rating ?? undefined,
       tags: segment.metadata.tags,

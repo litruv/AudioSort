@@ -3,24 +3,35 @@ import type { AudioFileSummary, CategoryRecord } from '../../../shared/models';
 import { TagEditor } from './TagEditor';
 
 /**
+ * Normalizes path separators to backslashes for consistent display on Windows.
+ */
+function normalizePathDisplay(path: string): string {
+  return path.replace(/\//g, '\\');
+}
+
+/**
  * Props for FileDetailPanel component.
  */
 export interface FileDetailPanelProps {
   file: AudioFileSummary | null;
+  /** Optional summary of the parent file when this entry was generated from another file. */
+  parentFile: AudioFileSummary | null;
   categories: CategoryRecord[];
   onRename(newName: string): Promise<void>;
   onMove(targetRelativeDirectory: string): Promise<void>;
   /** Organizes a file with optional metadata fields (customName, author, copyright, rating 1-5). */
   onOrganize(metadata: { customName?: string; author?: string; copyright?: string; rating?: number }): Promise<void>;
-  onUpdateTags(data: { tags: string[]; categories: string[] }): Promise<void>;
+  onUpdateTags(categories: string[]): Promise<void>;
   onUpdateCustomName(customName: string | null): Promise<void>;
+  /** Invoked when the user requests to open the parent file. */
+  onOpenParent?(parentId: number): void;
   metadataSuggestionsVersion: number;
 }
 
 /**
  * Displays metadata for the selected file with rename, move, and tagging controls.
  */
-export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize, onUpdateTags, onUpdateCustomName, metadataSuggestionsVersion }: FileDetailPanelProps): JSX.Element {
+export function FileDetailPanel({ file, parentFile, categories, onRename, onMove, onOrganize, onUpdateTags, onUpdateCustomName, onOpenParent, metadataSuggestionsVersion }: FileDetailPanelProps): JSX.Element {
   const [isEditingCustomName, setIsEditingCustomName] = useState(false);
   const [moveDraft, setMoveDraft] = useState('');
   const [customNameDraft, setCustomNameDraft] = useState('');
@@ -192,7 +203,7 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
     }
   };
 
-  const triggerOrganize = async (overrides?: { author?: string; rating?: number; customName?: string | null }) => {
+  const triggerOrganize = async (overrides?: { author?: string; rating?: number; customName?: string | null }, force = false) => {
     if (!file) {
       return;
     }
@@ -213,6 +224,7 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
 
     const previous = initialMetadataRef.current;
     if (
+      !force &&
       previous &&
       previous.author === comparisonState.author &&
       previous.copyright === comparisonState.copyright &&
@@ -250,10 +262,12 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
     }
   };
 
-  const handleTagSave = async (data: { tags: string[]; categories: string[] }) => {
+  const handleCategorySave = async (selectedCategories: string[]) => {
     setBusy(true);
     try {
-      await onUpdateTags(data);
+      await onUpdateTags(selectedCategories);
+    } catch (error) {
+      console.error('Failed to update categories', error);
     } finally {
       setBusy(false);
     }
@@ -266,6 +280,13 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
     } catch (error) {
       console.error('Failed to open folder:', error);
     }
+  };
+
+  const handleOpenParent = () => {
+    if (!file || file.parentFileId === null || !onOpenParent) {
+      return;
+    }
+    onOpenParent(file.parentFileId);
   };
 
   const toggleTagSection = () => {
@@ -292,15 +313,65 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
               {file.customName || file.displayName}
             </h1>
           )}
-          <p 
-            onClick={handleOpenFolder}
-            style={{ cursor: 'pointer', opacity: 0.7, transition: 'opacity 0.2s ease' }}
-            onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-            onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
-            title="Click to open in folder"
+          <div 
+            style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+            onMouseEnter={(e) => {
+              const btn = e.currentTarget.querySelector('.file-regenerate-name') as HTMLElement;
+              if (btn) btn.style.opacity = '1';
+            }}
+            onMouseLeave={(e) => {
+              const btn = e.currentTarget.querySelector('.file-regenerate-name') as HTMLElement;
+              if (btn) btn.style.opacity = '0';
+            }}
           >
-            {file.relativePath}
-          </p>
+            <p 
+              onClick={handleOpenFolder}
+              style={{ cursor: 'pointer', opacity: 0.7, transition: 'opacity 0.2s ease', margin: 0 }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
+              title="Click to open in folder"
+            >
+              {normalizePathDisplay(file.relativePath)}
+            </p>
+            <button
+              type="button"
+              className="file-regenerate-name"
+              onClick={async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setBusy(true);
+                try {
+                  await triggerOrganize({}, true);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              disabled={busy}
+              title="Regenerate filename based on current metadata"
+              style={{ 
+                padding: '4px 8px',
+                fontSize: '18px',
+                opacity: 0,
+                transition: 'opacity 0.2s ease',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'inherit'
+              }}
+            >
+              ↻
+            </button>
+          </div>
+          {file.parentFileId !== null && onOpenParent ? (
+            <button
+              type="button"
+              className="file-parent-link"
+              onClick={handleOpenParent}
+              title={parentFile ? `Open source file ${parentFile.displayName}` : 'Open source file'}
+            >
+              🔗 {parentFile ? parentFile.customName || parentFile.displayName : `File #${file.parentFileId}`}
+            </button>
+          ) : null}
         </div>
         <div className="file-meta-grid">
           <div>{formatBytes(file.size)}</div>
@@ -374,17 +445,16 @@ export function FileDetailPanel({ file, categories, onRename, onMove, onOrganize
           onClick={toggleTagSection}
           aria-expanded={isTagSectionExpanded}
         >
-          <span className="tag-editor-toggle-label">Tags</span>
+          <span className="tag-editor-toggle-label">Categories</span>
           <span className="tag-editor-toggle-icon" aria-hidden="true">
             {isTagSectionExpanded ? 'v' : '>'}
           </span>
         </button>
         <div className={isTagSectionExpanded ? 'tag-editor-content tag-editor-content--open' : 'tag-editor-content'} aria-hidden={!isTagSectionExpanded}>
           <TagEditor
-            tags={file.tags}
             categories={file.categories}
             availableCategories={categories}
-            onSave={handleTagSave}
+            onSave={handleCategorySave}
             showHeading={false}
           />
         </div>

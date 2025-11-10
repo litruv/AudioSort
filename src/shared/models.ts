@@ -26,6 +26,8 @@ export interface AudioFileSummary {
   bitDepth: number | null;
   /** Content checksum used for duplicate detection. */
   checksum: string | null;
+  /** Identifier of the source file this entry originated from, if any. */
+  parentFileId: number | null;
   /** Applied descriptive tags. */
   tags: string[];
   /** Associated UCS categories. */
@@ -90,8 +92,8 @@ export interface AppSettings {
 export interface TagUpdatePayload {
   /** Target audio file id. */
   fileId: number;
-  /** Free-form tag collection. */
-  tags: string[];
+  /** Optional free-form tag collection. When omitted, existing tags are preserved. */
+  tags?: string[];
   /** UCS category identifiers to attach. */
   categories: string[];
 }

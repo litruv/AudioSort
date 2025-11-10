@@ -33,6 +33,8 @@ export interface FileRecordInput {
   tags?: string[];
   /** Optional category payload (stored as JSON string). */
   categories?: string[];
+  /** Optional parent file reference when generated from another file. */
+  parentFileId?: number | null;
 }
 
 export interface FileRecordRow extends AudioFileSummary {}
@@ -89,7 +91,8 @@ export class DatabaseService {
         bit_depth,
         checksum,
         tags_json,
-        categories_json
+        categories_json,
+        parent_file_id
       ) VALUES (
         @absolutePath,
         @relativePath,
@@ -103,7 +106,8 @@ export class DatabaseService {
         @bitDepth,
         @checksum,
         @tagsJson,
-        @categoriesJson
+        @categoriesJson,
+        @parentFileId
       )
       ON CONFLICT(absolute_path) DO UPDATE SET
         library_relative_path = excluded.library_relative_path,
@@ -117,7 +121,8 @@ export class DatabaseService {
         bit_depth = excluded.bit_depth,
         checksum = excluded.checksum,
         tags_json = CASE WHEN files.tags_json = '[]' THEN excluded.tags_json ELSE files.tags_json END,
-        categories_json = CASE WHEN files.categories_json = '[]' THEN excluded.categories_json ELSE files.categories_json END
+        categories_json = CASE WHEN files.categories_json = '[]' THEN excluded.categories_json ELSE files.categories_json END,
+        parent_file_id = CASE WHEN excluded.parent_file_id IS NOT NULL THEN excluded.parent_file_id ELSE files.parent_file_id END
       RETURNING *`
     );
 
@@ -132,9 +137,10 @@ export class DatabaseService {
       durationMs: record.durationMs,
       sampleRate: record.sampleRate,
       bitDepth: record.bitDepth,
-  checksum: record.checksum,
+      checksum: record.checksum,
       tagsJson: JSON.stringify(record.tags ?? []),
-      categoriesJson: JSON.stringify(record.categories ?? [])
+      categoriesJson: JSON.stringify(record.categories ?? []),
+      parentFileId: record.parentFileId ?? null
     }) as DbRow | undefined;
 
     if (!row) {
@@ -145,22 +151,35 @@ export class DatabaseService {
   }
 
   /**
-   * Updates the stored tags and categories for a file.
+   * Updates the stored tags and/or categories for a file.
+   * When a field is omitted it remains unchanged.
    */
-  public updateTagging(fileId: number, tags: string[], categories: string[]): AudioFileSummary {
+  public updateTagging(fileId: number, tags?: string[], categories?: string[]): AudioFileSummary {
     const connection = this.requireDb();
+    const updates: string[] = [];
+    const parameters: Record<string, unknown> = { id: fileId };
+
+    if (tags !== undefined) {
+      updates.push('tags_json = @tags');
+      parameters.tags = JSON.stringify(tags);
+    }
+
+    if (categories !== undefined) {
+      updates.push('categories_json = @categories');
+      parameters.categories = JSON.stringify(categories);
+    }
+
+    if (updates.length === 0) {
+      return this.getFileById(fileId);
+    }
+
     const statement = connection.prepare(
       `UPDATE files
-         SET tags_json = @tags,
-             categories_json = @categories
+         SET ${updates.join(', ')}
        WHERE id = @id
        RETURNING *`
     );
-    const row = statement.get({
-      id: fileId,
-      tags: JSON.stringify(tags),
-      categories: JSON.stringify(categories)
-    }) as DbRow | undefined;
+    const row = statement.get(parameters) as DbRow | undefined;
     if (!row) {
       throw new Error(`File with id ${fileId} not found`);
     }
@@ -408,6 +427,7 @@ export class DatabaseService {
       sampleRate: row.sample_rate === null ? null : (row.sample_rate as number),
       bitDepth: row.bit_depth === null ? null : (row.bit_depth as number),
       checksum: typeof row.checksum === 'string' ? (row.checksum as string) : null,
+      parentFileId: typeof row.parent_file_id === 'number' ? (row.parent_file_id as number) : null,
       tags: this.parseJsonArray(row.tags_json),
       categories: this.parseJsonArray(row.categories_json),
       customName: typeof row.custom_name === 'string' ? (row.custom_name as string) : null
@@ -444,7 +464,8 @@ export class DatabaseService {
         bit_depth INTEGER,
         checksum TEXT,
         tags_json TEXT NOT NULL DEFAULT '[]',
-        categories_json TEXT NOT NULL DEFAULT '[]'
+        categories_json TEXT NOT NULL DEFAULT '[]',
+        parent_file_id INTEGER REFERENCES files(id)
       );
       CREATE INDEX IF NOT EXISTS idx_files_display_name ON files(display_name);
       CREATE INDEX IF NOT EXISTS idx_files_modified ON files(modified_at);
@@ -478,6 +499,7 @@ export class DatabaseService {
     this.addColumnIfMissing(connection, 'files', 'created_at', 'INTEGER');
     this.addColumnIfMissing(connection, 'files', 'checksum', 'TEXT');
     this.addColumnIfMissing(connection, 'files', 'custom_name', 'TEXT');
+  this.addColumnIfMissing(connection, 'files', 'parent_file_id', 'INTEGER');
 
     // Create checksum index after ensuring column exists
     connection.exec('CREATE INDEX IF NOT EXISTS idx_files_checksum ON files(checksum)');

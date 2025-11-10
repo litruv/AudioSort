@@ -12,6 +12,7 @@ export const IPC_CHANNELS = {
   libraryCustomName: 'library:custom-name',
   libraryOpenFolder: 'library:open-folder',
   libraryDelete: 'library:delete',
+  librarySplit: 'library:split',
   libraryBuffer: 'library:buffer',
   libraryMetadata: 'library:metadata',
   libraryMetadataSuggestions: 'library:metadata-suggestions',
@@ -45,18 +46,23 @@ export interface RendererApi {
   /** Moves a file to another subdirectory under the library root. */
   moveFile(fileId: number, targetRelativeDirectory: string): Promise<import('./models').AudioFileSummary>;
   /** Automatically organizes a file based on its categories. */
-  organizeFile(fileId: number, metadata: { customName?: string; author?: string; copyright?: string; rating?: number }): Promise<import('./models').AudioFileSummary>;
+  organizeFile(
+    fileId: number,
+    metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }
+  ): Promise<import('./models').AudioFileSummary>;
   /** Updates the custom name for a file. */
   updateCustomName(fileId: number, customName: string | null): Promise<import('./models').AudioFileSummary>;
   /** Opens the file's containing folder in the system file explorer. */
   openFileFolder(fileId: number): Promise<void>;
   /** Deletes files from disk and database. */
   deleteFiles(fileIds: number[]): Promise<void>;
+  /** Splits an audio file into segment files. */
+  splitFile(fileId: number, segments: import('./models').SplitSegmentRequest[]): Promise<import('./models').AudioFileSummary[]>;
   /** Fetches the binary data required for playback. */
   getAudioBuffer(fileId: number): Promise<import('./models').AudioBufferPayload>;
   /** Returns a lightweight waveform preview for rendering list backgrounds. */
   getWaveformPreview(fileId: number, pointCount?: number): Promise<{ samples: number[]; rms: number }>;
-  /** Updates free-form tags and UCS categories. */
+  /** Updates UCS categories for a file (free-form tags are preserved unless explicitly provided). */
   updateTagging(payload: import('./models').TagUpdatePayload): Promise<import('./models').AudioFileSummary>;
   /** Returns the catalog of UCS categories. */
   listCategories(): Promise<import('./models').CategoryRecord[]>;
@@ -67,7 +73,10 @@ export interface RendererApi {
   /** Lists distinct metadata values gathered from the library for quick suggestions. */
   listMetadataSuggestions(): Promise<{ authors: string[]; copyrights: string[] }>;
   /** Updates metadata (author, copyright, rating) without organizing the file. */
-  updateFileMetadata(fileId: number, metadata: { author?: string; copyright?: string; rating?: number }): Promise<void>;
+  updateFileMetadata(
+    fileId: number,
+    metadata: { author?: string | null; copyright?: string | null; rating?: number }
+  ): Promise<void>;
   /** Listens for menu actions from the main process. Returns a cleanup function. */
   onMenuAction(channel: string, callback: () => void): () => void;
 }

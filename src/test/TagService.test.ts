@@ -184,6 +184,22 @@ describe('TagService', () => {
       // Verify write succeeded
       assert.ok(true);
     });
+
+    it('should embed parent id in INFO chunk', () => {
+      tagService.writeMetadataOnly(testFilePath, {
+        tags: ['test'],
+        categories: ['AMBNatr'],
+        parentId: 42
+      });
+
+      const info = tagService.readInfoTags(testFilePath);
+      assert.strictEqual(info.IPAR, '42');
+      const comment = info.ICMT ?? '';
+      assert.ok(comment.length > 0, 'Expected INFO comment to be populated with JSON payload');
+      const parsed = JSON.parse(comment);
+      assert.strictEqual(parsed.parentId, 42);
+      assert.deepStrictEqual(parsed.categories, ['AMBNatr']);
+    });
   });
 
   describe('applyTagging', () => {
@@ -240,6 +256,16 @@ describe('TagService', () => {
       const updated = tagService.applyTagging(fileId, ['tag1', '', '  ', 'tag2'], ['AMBNatr']);
 
       assert.deepStrictEqual(updated.tags, ['tag1', 'tag2']);
+    });
+
+    it('should preserve existing tags when omitted', () => {
+      const files = database.listFiles();
+      const fileId = files[0].id;
+
+      const before = database.getFileById(fileId);
+      const updated = tagService.applyTagging(fileId, undefined, ['AMBNatr']);
+
+      assert.deepStrictEqual(updated.tags, before.tags);
     });
   });
 });

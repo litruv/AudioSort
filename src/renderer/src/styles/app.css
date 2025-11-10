@@ -522,6 +522,23 @@ body {
   opacity: 0.7;
 }
 
+.file-parent-link {
+  margin-top: 0.25rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #6aa8ff;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.15s ease;
+}
+
+.file-parent-link:hover {
+  color: #9bc4ff;
+  text-decoration: underline;
+}
+
 .file-meta-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1604,3 +1621,342 @@ body {
     gap: 1rem;
   }
 }
+
+/* Edit Mode Styles */
+.edit-mode-overlay {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+.edit-mode-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: rgba(12, 16, 22, 0.95);
+}
+
+.edit-mode-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.edit-mode-header h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.edit-mode-header p {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.85rem;
+  opacity: 0.6;
+}
+
+.edit-mode-header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.edit-mode-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.edit-mode-waveform-container {
+  display: flex;
+  flex-direction: column;
+  height: 540px;
+  width: 100%;
+}
+
+.edit-mode-waveform {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.2);
+  position: relative;
+  width: 100%;
+  min-height: 0;
+}
+
+.edit-mode-playback-controls {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(15, 19, 25, 0.95);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  min-height: 3.5rem;
+}
+
+.edit-mode-playback-toggle {
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  flex-shrink: 0;
+}
+
+.edit-mode-playback-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-mode-playback-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edit-mode-playback-range {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.edit-mode-playback-idle {
+  font-size: 0.9rem;
+  opacity: 0.5;
+  font-style: italic;
+}
+
+.edit-mode-waveform canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.edit-mode-error,
+.edit-mode-placeholder {
+  padding: 2rem;
+  text-align: center;
+  opacity: 0.6;
+}
+
+.edit-mode-sidebar {
+  flex-shrink: 0;
+  max-height: 50%;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.segment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.segment-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.segment-list-header h2 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+
+.segment-list-header span {
+  font-size: 0.85rem;
+  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+.segment-list-empty {
+  padding: 1.5rem;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 0.9rem;
+}
+
+.segment-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.segment-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.5rem;
+  transition: all 0.2s ease;
+  position: relative;
+  max-width: 100%;
+}
+
+.segment-item--selected {
+  background: rgba(39, 110, 241, 0.15);
+  border-color: rgba(39, 110, 241, 0.3);
+}
+
+.segment-color-indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 0.5rem 0 0 0.5rem;
+}
+
+.segment-item-select {
+  all: unset;
+  cursor: pointer;
+  display: block;
+}
+
+.segment-item-time {
+  font-size: 0.9rem;
+  font-family: 'Consolas', 'Monaco', monospace;
+  opacity: 0.9;
+}
+
+.segment-item-label-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.segment-item input[type="text"] {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(12, 16, 22, 0.9);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.segment-item-remove {
+  align-self: flex-start;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.6rem;
+}
+
+.segment-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.segment-metadata h2 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+
+.segment-item-delete {
+  flex-shrink: 0;
+  background: rgba(255, 59, 59, 0.15);
+  border: 1px solid rgba(255, 59, 59, 0.3);
+  color: #ff6b6b;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.segment-item-delete:hover {
+  background: rgba(255, 59, 59, 0.25);
+  border-color: rgba(255, 59, 59, 0.5);
+  transform: scale(1.05);
+}
+
+.segment-item-delete:active {
+  transform: scale(0.95);
+}
+
+.segment-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.segment-field span {
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.segment-field input[type="text"],
+.segment-field input[type="number"] {
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(12, 16, 22, 0.9);
+  color: inherit;
+  font: inherit;
+}
+
+.star-rating {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.star {
+  all: unset;
+  cursor: pointer;
+  font-size: 1.25rem;
+  opacity: 0.3;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.star:hover {
+  opacity: 0.6;
+  transform: scale(1.1);
+}
+
+.star--filled {
+  opacity: 1;
+  color: #f59e0b;
+}
+
+.segment-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+

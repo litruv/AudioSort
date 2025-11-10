@@ -3,7 +3,7 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Menu } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipc';
-import { TagUpdatePayload } from '../shared/models';
+import { SplitSegmentRequest, TagUpdatePayload } from '../shared/models';
 import { DatabaseService } from './services/DatabaseService';
 import { LibraryService } from './services/LibraryService';
 import { SearchService } from './services/SearchService';
@@ -141,6 +141,7 @@ export class MainApp {
   ipcMain.removeHandler(IPC_CHANNELS.libraryMetadata);
   ipcMain.removeHandler(IPC_CHANNELS.libraryMetadataSuggestions);
   ipcMain.removeHandler(IPC_CHANNELS.libraryUpdateMetadata);
+   ipcMain.removeHandler(IPC_CHANNELS.librarySplit);
     ipcMain.removeHandler(IPC_CHANNELS.libraryWaveformPreview);
     ipcMain.removeHandler(IPC_CHANNELS.tagsUpdate);
     ipcMain.removeHandler(IPC_CHANNELS.categoriesList);
@@ -241,7 +242,11 @@ export class MainApp {
 
     ipcMain.handle(
       IPC_CHANNELS.libraryOrganize,
-      async (_event: IpcMainInvokeEvent, fileId: number, metadata: { customName?: string; author?: string; copyright?: string; rating?: number }) =>
+      async (
+        _event: IpcMainInvokeEvent,
+        fileId: number,
+        metadata: { customName?: string | null; author?: string | null; copyright?: string | null; rating?: number }
+      ) =>
       this.requireLibrary().organizeFile(fileId, metadata)
     );
 
@@ -257,6 +262,12 @@ export class MainApp {
 
     ipcMain.handle(IPC_CHANNELS.libraryDelete, async (_event: IpcMainInvokeEvent, fileIds: number[]) =>
       this.requireLibrary().deleteFiles(fileIds)
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.librarySplit,
+      async (_event: IpcMainInvokeEvent, fileId: number, segments: SplitSegmentRequest[]) =>
+        this.requireLibrary().splitFile(fileId, segments)
     );
 
     ipcMain.handle(IPC_CHANNELS.libraryBuffer, async (_event: IpcMainInvokeEvent, fileId: number) =>
@@ -285,7 +296,11 @@ export class MainApp {
 
     ipcMain.handle(
       IPC_CHANNELS.libraryUpdateMetadata,
-      async (_event: IpcMainInvokeEvent, fileId: number, metadata: { author?: string; copyright?: string; rating?: number }) =>
+      async (
+        _event: IpcMainInvokeEvent,
+        fileId: number,
+        metadata: { author?: string | null; copyright?: string | null; rating?: number }
+      ) =>
         this.requireLibrary().updateFileMetadata(fileId, metadata)
     );
   }

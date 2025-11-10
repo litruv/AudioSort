@@ -69,6 +69,14 @@ function App(): JSX.Element {
     [library.files, library.selectedFileId]
   );
 
+  const parentFile = useMemo(() => {
+    const parentId = selectedFile?.parentFileId ?? null;
+    if (parentId === null) {
+      return null;
+    }
+    return library.files.find((file) => file.id === parentId) ?? null;
+  }, [library.files, selectedFile?.parentFileId]);
+
   const selectedFiles = useMemo(
     () => library.files.filter((file) => library.selectedFileIds.has(file.id)),
     [library.files, library.selectedFileIds]
@@ -172,15 +180,20 @@ function App(): JSX.Element {
     await libraryStore.updateCustomName(selectedFile.id, customName);
   };
 
-  const handleTagUpdate = async (data: { tags: string[]; categories: string[] }) => {
+  const handleTagUpdate = async (categories: string[]) => {
     if (!selectedFile) {
       return;
     }
-    await libraryStore.updateTagging({ fileId: selectedFile.id, ...data });
+    await libraryStore.updateTagging({ fileId: selectedFile.id, categories });
   };
 
-  const handleMultiFileTagUpdate = async (fileId: number, data: { tags: string[]; categories: string[] }) => {
-    await libraryStore.updateTagging({ fileId, ...data });
+  const handleOpenParent = (parentId: number) => {
+    void libraryStore.focusOnFile(parentId);
+    setActiveTab('listen');
+  };
+
+  const handleMultiFileTagUpdate = async (fileId: number, categories: string[]) => {
+    await libraryStore.updateTagging({ fileId, categories });
   };
 
   const handleMultiFileCustomName = async (fileId: number, customName: string | null) => {
@@ -204,10 +217,9 @@ function App(): JSX.Element {
       if (existingCategories.includes(categoryId)) continue;
       
       const newCategories = [...existingCategories, categoryId];
-      await libraryStore.updateTagging({ 
-        fileId, 
-        tags: file.tags, 
-        categories: newCategories 
+      await libraryStore.updateTagging({
+        fileId,
+        categories: newCategories
       });
     }
   };
@@ -287,12 +299,14 @@ function App(): JSX.Element {
                 <>
                   <FileDetailPanel
                     file={selectedFile}
+                    parentFile={parentFile}
                     categories={library.categories}
                     onRename={handleRename}
                     onMove={handleMove}
                     onOrganize={handleOrganize}
                     onUpdateTags={handleTagUpdate}
                     onUpdateCustomName={handleUpdateCustomName}
+                    onOpenParent={handleOpenParent}
                     metadataSuggestionsVersion={library.metadataSuggestionsVersion}
                   />
                   <AudioPlayer snapshot={player} />

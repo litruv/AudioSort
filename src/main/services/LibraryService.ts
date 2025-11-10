@@ -31,7 +31,6 @@ export class LibraryService {
   private readonly organization: OrganizationService;
   private metadataSuggestionCache: { authors: Set<string> } | null = null;
   private readonly waveformPreviewCache = new Map<number, { modifiedAt: number; pointCount: number; samples: number[]; rms: number }>();
-
   public constructor(
     private readonly database: DatabaseService,
     private readonly settings: SettingsService,
@@ -49,10 +48,10 @@ export class LibraryService {
       return;
     }
     const fileContent = await fs.readFile(csvAbsolutePath, 'utf-8');
-      const rows = parse(fileContent, {
-        columns: true,
-        skip_empty_lines: true
-      }) as CsvCategoryRow[];
+    const rows = parse(fileContent, {
+      columns: true,
+      skip_empty_lines: true
+    }) as CsvCategoryRow[];
     for (const row of rows) {
       const category: CategoryRecord = {
         id: row.CatID,
@@ -87,8 +86,9 @@ export class LibraryService {
     const cleanedTempFiles = await this.cleanupTempFiles();
     const libraryRoot = this.settings.ensureLibraryPath();
     const existing = this.database.listFiles();
-    const existingByPath = new Map(existing.map((file) => [file.absolutePath, file] as const));
-    const existingByChecksum = new Map(existing.filter((file) => file.checksum).map((file) => [file.checksum!, file] as const));
+  const existingByPath = new Map(existing.map((file) => [file.absolutePath, file] as const));
+  const existingByChecksum = new Map(existing.filter((file) => file.checksum).map((file) => [file.checksum!, file] as const));
+  const discoveredByPath = new Map<string, AudioFileSummary>();
 
     const pattern = ['**/*.wav', '**/*.wave'];
     const absolutePaths = await fg(pattern, {
@@ -117,9 +117,29 @@ export class LibraryService {
       const knownFile = knownByPath ?? knownByChecksum ?? null;
       const wasKnown = knownFile !== null;
       
-      // Read embedded WAV metadata (author, copyright, rating, title)
+      // Read embedded WAV metadata (author, copyright, rating, title, parentId)
       const embeddedMetadata = this.tagService.readMetadata(absolutePath);
       
+      let parentFileId = knownFile?.parentFileId ?? null;
+      
+      // First try embedded metadata parentId
+      if (parentFileId === null && embeddedMetadata.parentId !== undefined) {
+        parentFileId = embeddedMetadata.parentId;
+      }
+      
+      // Fall back to filename pattern matching for segments
+      if (parentFileId === null) {
+        const segmentMatch = fileName.match(/^(.*)_segment\d+(\.[^.]+)$/i);
+        if (segmentMatch) {
+          const parentFileName = `${segmentMatch[1]}${segmentMatch[2]}`;
+          const parentAbsolutePath = path.join(path.dirname(absolutePath), parentFileName);
+          const parentRecord = existingByPath.get(parentAbsolutePath) ?? discoveredByPath.get(parentAbsolutePath) ?? null;
+          if (parentRecord) {
+            parentFileId = parentRecord.id;
+          }
+        }
+      }
+
       const record: FileRecordInput = {
         absolutePath,
         relativePath,
@@ -133,14 +153,36 @@ export class LibraryService {
         bitDepth: metadata.bitDepth,
         checksum,
         tags: metadata.tags.length > 0 ? metadata.tags : (knownFile?.tags ?? []),
-        categories: metadata.categories.length > 0 ? metadata.categories : (knownFile?.categories ?? [])
+        categories: metadata.categories.length > 0 ? metadata.categories : (knownFile?.categories ?? []),
+        parentFileId
       };
       const upserted = this.database.upsertFile(record);
       
       // Update custom name from embedded title if present, otherwise keep existing
       const customName = embeddedMetadata.title?.trim() || knownFile?.customName || null;
-      if (customName !== upserted.customName) {
-        this.database.updateCustomName(upserted.id, customName);
+      const finalRecord = customName !== upserted.customName
+        ? this.database.updateCustomName(upserted.id, customName)
+        : upserted;
+
+      existingByPath.set(absolutePath, finalRecord);
+      if (checksum) {
+        existingByChecksum.set(checksum, finalRecord);
+      }
+      discoveredByPath.set(absolutePath, finalRecord);
+
+      if (parentFileId !== null) {
+        const embeddedParent = embeddedMetadata.parentId ?? null;
+        if (embeddedParent === null || embeddedParent !== parentFileId) {
+          this.tagService.writeMetadataOnly(absolutePath, {
+            tags: finalRecord.tags,
+            categories: finalRecord.categories,
+            title: customName ?? embeddedMetadata.title ?? finalRecord.displayName,
+            author: embeddedMetadata.author ?? null,
+            rating: embeddedMetadata.rating,
+            copyright: embeddedMetadata.copyright ?? null,
+            parentId: parentFileId
+          });
+        }
       }
       
       if (wasKnown) {
@@ -510,7 +552,9 @@ export class LibraryService {
         categories: updatedRecord.categories,
         title: effectiveCustomName,
         author: mergedAuthor,
-        rating: mergedRating
+        rating: mergedRating,
+        copyright: existing.copyright ?? null,
+        parentId: updatedRecord.parentFileId ?? null
       });
 
       // Update suggestions cache for any metadata that was provided
@@ -604,7 +648,9 @@ export class LibraryService {
       categories: updated.categories,
       title: effectiveCustomName,
       author: mergedAuthor,
-      rating: mergedRating
+      rating: mergedRating,
+      copyright: existing.copyright ?? null,
+      parentId: updated.parentFileId ?? null
     });
 
     // Update suggestions cache for any metadata that was provided
@@ -683,13 +729,14 @@ export class LibraryService {
     })();
     const container = (wave as WaveFile & { container?: string }).container ?? 'RIFF';
 
-    let originalMetadata: { author?: string | null; rating?: number; title?: string | null } = {};
+  let originalMetadata: { author?: string | null; rating?: number; title?: string | null; copyright?: string | null } = {};
     try {
       const metadata = this.tagService.readMetadata(record.absolutePath);
       originalMetadata = {
         author: metadata.author ?? null,
         rating: metadata.rating ?? undefined,
-        title: metadata.title ?? null
+        title: metadata.title ?? null,
+        copyright: metadata.copyright ?? null
       };
     } catch (error) {
       console.warn('Failed to read original metadata before splitting', error);
@@ -739,12 +786,33 @@ export class LibraryService {
       (nextWave as WaveFile & { container?: string }).container = container;
       const segmentBytes = Buffer.from(nextWave.toBuffer());
 
+      // Determine the segment name part - use label if available, otherwise use sequence
+      let segmentNamePart = '';
+      if (segment.label) {
+        const sanitized = this.organization.sanitizeCustomName(segment.label);
+        if (sanitized) {
+          segmentNamePart = sanitized;
+        }
+      }
+      
       let segmentFileName = '';
       let segmentAbsolutePath = '';
       for (let attempt = 0; attempt < 1000; attempt += 1) {
-        const suffix = this.organization.formatSequenceNumber(sequence);
-        sequence += 1;
-        const candidateName = `${baseName}_segment${suffix}.wav`;
+        let candidateName: string;
+        if (segmentNamePart) {
+          // Use label-based name, with optional suffix for duplicates
+          if (attempt === 0) {
+            candidateName = `${baseName}_${segmentNamePart}.wav`;
+          } else {
+            candidateName = `${baseName}_${segmentNamePart}_${this.organization.formatSequenceNumber(attempt)}.wav`;
+          }
+        } else {
+          // Fallback to sequential numbering
+          const suffix = this.organization.formatSequenceNumber(sequence);
+          sequence += 1;
+          candidateName = `${baseName}_segment${suffix}.wav`;
+        }
+        
         if (usedNames.has(candidateName)) {
           continue;
         }
@@ -789,12 +857,15 @@ export class LibraryService {
         bitDepth: bitDepthNumeric,
         checksum,
         tags: resolvedTags,
-        categories: resolvedCategories
+        categories: resolvedCategories,
+        parentFileId: record.id
       });
 
       const resolvedCustomName = segment.metadata?.customName !== undefined
         ? this.normaliseMetadataInput(segment.metadata.customName)
-        : record.customName ?? null;
+        : segment.label !== undefined
+          ? this.normaliseMetadataInput(segment.label)
+          : record.customName ?? null;
       const updatedRecord = resolvedCustomName !== fileRecord.customName
         ? this.database.updateCustomName(fileRecord.id, resolvedCustomName ?? null)
         : fileRecord;
@@ -811,7 +882,9 @@ export class LibraryService {
         categories: resolvedCategories,
         title: resolvedCustomName ?? updatedRecord.displayName,
         author: resolvedAuthor ?? undefined,
-        rating: resolvedRating
+        rating: resolvedRating,
+        copyright: originalMetadata.copyright ?? null,
+        parentId: record.id
       });
 
       if (typeof resolvedAuthor === 'string' && resolvedAuthor.length > 0) {
@@ -872,7 +945,9 @@ export class LibraryService {
       categories: record.categories,
       title: record.customName ?? existing.title,
       author: requestedAuthor !== undefined ? requestedAuthor : existing.author ?? null,
-      rating: metadata.rating !== undefined ? metadata.rating : existing.rating
+      rating: metadata.rating !== undefined ? metadata.rating : existing.rating,
+      copyright: existing.copyright ?? null,
+      parentId: record.parentFileId ?? null
     };
     
     // Write merged metadata to the WAV file

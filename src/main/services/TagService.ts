@@ -10,23 +10,25 @@ export class TagService {
   public constructor(private readonly database: DatabaseService) {}
 
   /**
-   * Applies tags and categories to a file record and embeds the metadata into the WAV container.
+   * Applies category updates (and optional tag overrides) then embeds metadata into the WAV container.
    * Preserves existing author, title, and rating fields.
    */
-  public applyTagging(fileId: number, tags: string[], categories: string[]): AudioFileSummary {
-    const normalisedTags = this.normaliseValues(tags);
+  public applyTagging(fileId: number, tags: string[] | undefined, categories: string[]): AudioFileSummary {
     const normalisedCategories = this.normaliseValues(categories);
+    const normalisedTags = Array.isArray(tags) ? this.normaliseValues(tags) : undefined;
     const updated = this.database.updateTagging(fileId, normalisedTags, normalisedCategories);
     
     // Read existing metadata to preserve author, title, and rating
     const existing = this.readMetadata(updated.absolutePath);
     
     this.writeWaveMetadata(updated.absolutePath, {
-      tags: normalisedTags,
-      categories: normalisedCategories,
+  tags: normalisedTags ?? updated.tags,
+  categories: normalisedCategories,
       title: existing.title,
       author: existing.author,
-      rating: existing.rating
+      rating: existing.rating,
+      copyright: existing.copyright,
+      parentId: existing.parentId ?? updated.parentFileId ?? null
     });
     return updated;
   }
@@ -52,6 +54,8 @@ export class TagService {
     author?: string;
     title?: string;
     rating?: number;
+    copyright?: string;
+    parentId?: number;
   } {
     try {
       const buffer = fs.readFileSync(filePath);
@@ -63,10 +67,44 @@ export class TagService {
         rating = Math.floor(ratingValue / 2);
       }
 
+      const copyright = tags.ICOP?.trim() || undefined;
+      
+      // Try to read parentId from JSON comment first
+      let parentId: number | undefined;
+      const comment = tags.ICMT?.trim();
+      if (comment) {
+        try {
+          const parsed = JSON.parse(comment);
+          if (parsed && typeof parsed.parentId === 'number') {
+            parentId = parsed.parentId;
+          }
+        } catch {
+          // Not JSON or invalid, try fallback to IPAR
+          const parentRaw = tags.IPAR?.trim();
+          if (parentRaw && parentRaw.length > 0) {
+            const parsedNum = Number.parseInt(parentRaw, 10);
+            if (Number.isFinite(parsedNum)) {
+              parentId = parsedNum;
+            }
+          }
+        }
+      } else {
+        // No comment, try fallback to IPAR
+        const parentRaw = tags.IPAR?.trim();
+        if (parentRaw && parentRaw.length > 0) {
+          const parsedNum = Number.parseInt(parentRaw, 10);
+          if (Number.isFinite(parsedNum)) {
+            parentId = parsedNum;
+          }
+        }
+      }
+
       return {
         author: tags.IART?.trim() || undefined,
         title: tags.INAM?.trim() || undefined,
-        rating
+        rating,
+        copyright,
+        parentId
       };
     } catch (error) {
       // eslint-disable-next-line no-console -- Logging to devtools console is helpful for diagnosis.
@@ -84,9 +122,11 @@ export class TagService {
     metadata: {
       tags: string[];
       categories: string[];
-      title: string | null | undefined;
-      author: string | null | undefined;
-      rating: number | undefined;
+      title?: string | null;
+      author?: string | null;
+      rating?: number;
+      copyright?: string | null;
+      parentId?: number | null;
     }
   ): void {
     this.writeWaveMetadata(filePath, metadata);
@@ -101,9 +141,11 @@ export class TagService {
     metadata: {
       tags: string[];
       categories: string[];
-      title: string | null | undefined;
-      author: string | null | undefined;
-      rating: number | undefined;
+      title?: string | null;
+      author?: string | null;
+      rating?: number;
+      copyright?: string | null;
+      parentId?: number | null;
     }
   ): void {
     try {
@@ -114,22 +156,47 @@ export class TagService {
         listInfoTags?: Record<string, string>;
       };
 
-      const tagValuesList = metadata.tags.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
-      const categoryValuesList = metadata.categories.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+      const tagValuesList = (metadata.tags ?? [])
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      const categoryValuesList = (metadata.categories ?? [])
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
 
       const tagText = tagValuesList.length > 0 ? tagValuesList.join('; ') : null;
       const categoryText = categoryValuesList.length > 0 ? categoryValuesList.join('; ') : null;
       const primaryCategory = categoryValuesList.at(0) ?? null;
+      const trimmedTitle = metadata.title?.toString().trim();
+      const effectiveTitle = trimmedTitle && trimmedTitle.length > 0 ? trimmedTitle : null;
+      const trimmedAuthor = metadata.author?.toString().trim();
+      const effectiveAuthor = trimmedAuthor && trimmedAuthor.length > 0 ? trimmedAuthor : null;
+      const trimmedCopyright = metadata.copyright?.toString().trim();
+      const effectiveCopyright = trimmedCopyright && trimmedCopyright.length > 0 ? trimmedCopyright : null;
+      const parentText = metadata.parentId !== undefined && metadata.parentId !== null
+        ? String(metadata.parentId)
+        : null;
+      const commentPayload = {
+        version: 1,
+        tags: tagValuesList,
+        categories: categoryValuesList,
+        parentId: metadata.parentId ?? null,
+        title: effectiveTitle,
+        author: effectiveAuthor,
+        rating: metadata.rating ?? null
+      } satisfies Record<string, unknown>;
+      const commentText = JSON.stringify(commentPayload);
 
       const tagValues: Record<string, string | null> = {
         IKEY: tagText,
-        ICMT: tagText,
+  ICMT: commentText,
         ISBJ: categoryText,
         ISUB: primaryCategory,
         IGNR: null,
-        INAM: metadata.title?.trim()?.length ? metadata.title.trim() : null,
-        IART: metadata.author?.trim()?.length ? metadata.author.trim() : null,
+        INAM: effectiveTitle,
+        IART: effectiveAuthor,
         IRTD: metadata.rating && metadata.rating > 0 ? String(metadata.rating * 2) : null,
+        ICOP: effectiveCopyright,
+        IPAR: parentText,
         ISFT: 'AudioSort'
       };
 
@@ -139,11 +206,13 @@ export class TagService {
       fs.writeFileSync(filePath, updatedBuffer);
 
       console.log(`Wrote metadata to ${filePath}:`, {
-        tags: metadata.tags.join(', '),
+        tags: Array.isArray(metadata.tags) ? metadata.tags.join(', ') : '',
         categories: metadata.categories.join(', '),
-        title: metadata.title,
-        author: metadata.author,
-        rating: metadata.rating
+        title: effectiveTitle,
+        author: effectiveAuthor,
+        copyright: effectiveCopyright,
+        rating: metadata.rating,
+        parentId: metadata.parentId ?? null
       });
     } catch (error) {
       // eslint-disable-next-line no-console -- Logging to devtools console is helpful for diagnosis.

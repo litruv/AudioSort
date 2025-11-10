@@ -6,7 +6,7 @@ import { TagEditor } from './TagEditor';
 export interface MultiFileEditorProps {
   files: AudioFileSummary[];
   categories: CategoryRecord[];
-  onUpdateTags(fileId: number, data: { tags: string[]; categories: string[] }): Promise<void>;
+  onUpdateTags(fileId: number, categories: string[]): Promise<void>;
   onUpdateCustomName(fileId: number, customName: string | null): Promise<void>;
   onOrganize(fileId: number, metadata: { customName?: string | null; author?: string | null; rating?: number }): Promise<void>;
   onUpdateMetadata(fileId: number, metadata: { author?: string | null; rating?: number }): Promise<void>;
@@ -14,7 +14,7 @@ export interface MultiFileEditorProps {
 }
 
 /**
- * Multi-file tag editor that shows aggregated metadata and allows batch editing.
+ * Multi-file metadata editor that focuses on shared categories and attributes.
  */
 export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCustomName, onOrganize, onUpdateMetadata, metadataSuggestionsVersion }: MultiFileEditorProps): JSX.Element {
   const [sharedCustomName, setSharedCustomName] = useState('');
@@ -22,20 +22,6 @@ export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCusto
   const [sharedRating, setSharedRating] = useState(0);
   const [suggestions, setSuggestions] = useState<{ authors: string[] }>({ authors: [] });
   const [isTagSectionExpanded, setIsTagSectionExpanded] = useState(true);
-
-  // Compute aggregated tags and categories for TagEditor
-  const aggregatedTags = useMemo(() => {
-    const tagCounts = new Map<string, number>();
-    for (const file of files) {
-      for (const tag of file.tags) {
-        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-      }
-    }
-    // Only show tags that appear in all files
-    return Array.from(tagCounts.entries())
-      .filter(([, count]) => count === files.length)
-      .map(([tag]) => tag);
-  }, [files]);
 
   const aggregatedCategories = useMemo(() => {
     const categoryCounts = new Map<string, number>();
@@ -199,22 +185,22 @@ export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCusto
     }
   };
 
-  const handleTagSave = async (data: { tags: string[]; categories: string[] }) => {
+  const handleCategorySave = async (selectedCategories: string[]) => {
     try {
       let failureCount = 0;
       for (const file of files) {
         try {
-          await onUpdateTags(file.id, data);
+          await onUpdateTags(file.id, selectedCategories);
         } catch (error) {
           failureCount += 1;
-          console.error(`Failed to update tags for file ${file.id} (${file.fileName}):`, error);
+          console.error(`Failed to update categories for file ${file.id} (${file.fileName}):`, error);
         }
       }
       if (failureCount > 0) {
-        console.error(`${failureCount} file(s) failed to update tags`);
+        console.error(`${failureCount} file(s) failed to update categories`);
       }
     } catch (error) {
-      console.error('Failed to update tags:', error);
+      console.error('Failed to update categories:', error);
     }
   };
 
@@ -309,17 +295,16 @@ export function MultiFileEditor({ files, categories, onUpdateTags, onUpdateCusto
             onClick={toggleTagSection}
             aria-expanded={isTagSectionExpanded}
           >
-            <span className="tag-editor-toggle-label">Tags</span>
+            <span className="tag-editor-toggle-label">Categories</span>
             <span className="tag-editor-toggle-icon" aria-hidden="true">
               {isTagSectionExpanded ? 'v' : '>'}
             </span>
           </button>
           <div className={isTagSectionExpanded ? 'tag-editor-content tag-editor-content--open' : 'tag-editor-content'} aria-hidden={!isTagSectionExpanded}>
             <TagEditor
-              tags={aggregatedTags}
               categories={aggregatedCategories}
               availableCategories={categories}
-              onSave={handleTagSave}
+              onSave={handleCategorySave}
               showHeading={false}
             />
           </div>

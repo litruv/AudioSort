@@ -208,6 +208,36 @@ export class LibraryStore extends EventTarget {
   }
 
   /**
+   * Clears active filters, refreshes the file cache, and selects the requested file.
+   */
+  public async focusOnFile(fileId: number): Promise<void> {
+    if (!Number.isFinite(fileId)) {
+      return;
+    }
+
+    const files = await window.api.listAudioFiles();
+    if (!files.some((file) => file.id === fileId)) {
+      return;
+    }
+
+    this.snapshot = {
+      ...this.snapshot,
+      files,
+      searchQuery: '',
+      categoryFilter: null
+    };
+    this.refreshVisibleFiles(fileId, false);
+    const focused = this.snapshot.files.find((file) => file.id === fileId) ?? null;
+    this.snapshot = {
+      ...this.snapshot,
+      selectedFileId: fileId,
+      selectedFileIds: new Set([fileId]),
+      focusedFile: focused
+    };
+    this.emitChange();
+  }
+
+  /**
    * Executes a fuzzy search request.
    */
   public async search(query: string): Promise<void> {

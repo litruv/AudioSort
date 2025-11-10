@@ -1,13 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useState,
-  useRef,
-  useLayoutEffect,
-  type ChangeEvent,
-  type UIEvent,
-  type CSSProperties
-} from 'react';
+import { useEffect, useMemo, useState, useRef, useLayoutEffect, type UIEvent } from 'react';
 import type { CategoryRecord } from '../../../shared/models';
 import {
   getCollapsedGroups,
@@ -24,19 +15,17 @@ import {
 import type { CategorySwatch } from '../utils/categoryColors';
 
 export interface TagEditorProps {
-  tags: string[];
   categories: string[];
   availableCategories: CategoryRecord[];
-  onSave(data: { tags: string[]; categories: string[] }): void;
+  onSave(categories: string[]): void | Promise<void>;
   /** If false the internal heading is omitted. Defaults to true. */
   showHeading?: boolean;
 }
 
 /**
- * Allows editing free-form tags and selecting UCS categories.
+ * Provides category selection controls without exposing free-form tag editing.
  */
-export function TagEditor({ tags, categories, availableCategories, onSave, showHeading = true }: TagEditorProps): JSX.Element {
-  const [tagDraft, setTagDraft] = useState(tags.join(', '));
+export function TagEditor({ categories, availableCategories, onSave, showHeading = true }: TagEditorProps): JSX.Element {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [selectedCategories, setSelectedCategories] = useState(new Set(categories));
   const [isCategoryListExpanded, setIsCategoryListExpanded] = useState(false);
@@ -52,7 +41,6 @@ export function TagEditor({ tags, categories, availableCategories, onSave, showH
   const isFirstRender = useRef(true);
 
   useEffect(() => {
-    setTagDraft(tags.join(', '));
     setSelectedCategories(new Set(categories));
     
     if (!isFirstRender.current) {
@@ -61,7 +49,7 @@ export function TagEditor({ tags, categories, availableCategories, onSave, showH
     } else {
       isFirstRender.current = false;
     }
-  }, [tags, categories]);
+  }, [categories]);
 
   const { groupedCategories, filteredResults } = useMemo(() => {
     const filter = categoryFilter.trim().toLowerCase();
@@ -146,20 +134,7 @@ export function TagEditor({ tags, categories, availableCategories, onSave, showH
       next.add(categoryId);
     }
     setSelectedCategories(next);
-    
-    const parsedTags = tagDraft
-      .split(',')
-      .map((value: string) => value.trim())
-      .filter((value: string) => value.length > 0);
-    onSave({ tags: parsedTags, categories: Array.from(next) });
-  };
-
-  const handleTagBlur = () => {
-    const parsedTags = tagDraft
-      .split(',')
-      .map((value: string) => value.trim())
-      .filter((value: string) => value.length > 0);
-    onSave({ tags: parsedTags, categories: Array.from(selectedCategories) });
+    onSave(Array.from(next));
   };
 
   const handleRemoveCategory = (categoryId: string) => {
@@ -174,11 +149,7 @@ export function TagEditor({ tags, categories, availableCategories, onSave, showH
       return;
     }
     setSelectedCategories(new Set());
-    const parsedTags = tagDraft
-      .split(',')
-      .map((value: string) => value.trim())
-      .filter((value: string) => value.length > 0);
-    onSave({ tags: parsedTags, categories: [] });
+    onSave([]);
   };
 
   const toggleCategoryList = () => {
@@ -187,18 +158,11 @@ export function TagEditor({ tags, categories, availableCategories, onSave, showH
 
   return (
     <section className="tag-editor">
-      {showHeading && <h2>Tags</h2>}
-      <textarea
-        value={tagDraft}
-        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setTagDraft(event.target.value)}
-        onBlur={handleTagBlur}
-        placeholder="Comma separated tags"
-        rows={3}
-      />
+      {showHeading && <h2>Categories</h2>}
       <div className="category-filter">
         <input
           value={categoryFilter}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => setCategoryFilter(event.target.value)}
+          onChange={(event) => setCategoryFilter(event.target.value)}
           placeholder="Filter UCS categories"
         />
       </div>
