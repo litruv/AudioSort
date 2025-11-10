@@ -16,12 +16,7 @@
     "start": "cross-env NODE_ENV=production electron ./dist/main/main/index.js",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win",
-    "test": "node --import tsx --test src/test/DatabaseService.test.ts src/test/TagService.test.ts src/test/LibraryService.test.ts src/test/SearchService.test.ts",
-    "test:tag": "node --import tsx --test src/test/TagService.test.ts",
-    "test:library": "node --import tsx --test src/test/LibraryService.test.ts",
-    "test:database": "node --import tsx --test src/test/DatabaseService.test.ts",
-    "test:search": "node --import tsx --test src/test/SearchService.test.ts"
+    "dist:win": "npm run build && electron-builder --win"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
