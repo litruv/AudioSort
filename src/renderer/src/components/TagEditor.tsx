@@ -71,16 +71,18 @@ export function TagEditor({ categories, availableCategories, onSave, showHeading
   }, [availableCategories, categoryFilter]);
 
   const selectedCategoryRecords = useMemo(
-    () => availableCategories
-      .filter((entry) => selectedCategories.has(entry.id))
-      .sort((left, right) => {
-        const topLevelComparison = left.category.localeCompare(right.category);
-        if (topLevelComparison !== 0) {
-          return topLevelComparison;
+    () => {
+      // Preserve the order from the categories prop (first category is primary)
+      const orderedRecords: CategoryRecord[] = [];
+      for (const catId of categories) {
+        const record = availableCategories.find((entry) => entry.id === catId);
+        if (record && selectedCategories.has(catId)) {
+          orderedRecords.push(record);
         }
-        return left.subCategory.localeCompare(right.subCategory);
-      }),
-    [availableCategories, selectedCategories]
+      }
+      return orderedRecords;
+    },
+    [availableCategories, selectedCategories, categories]
   );
 
   const categoryColorMap = useMemo(() => {
@@ -135,6 +137,16 @@ export function TagEditor({ categories, availableCategories, onSave, showHeading
     }
     setSelectedCategories(next);
     onSave(Array.from(next));
+  };
+
+  const handleSetPrimaryCategory = (categoryId: string) => {
+    const currentList = Array.from(selectedCategories);
+    // Remove the category from its current position
+    const filteredList = currentList.filter((id) => id !== categoryId);
+    // Add it to the front
+    const reorderedList = [categoryId, ...filteredList];
+    setSelectedCategories(new Set(reorderedList));
+    void onSave(reorderedList);
   };
 
   const handleRemoveCategory = (categoryId: string) => {
@@ -201,24 +213,89 @@ export function TagEditor({ categories, availableCategories, onSave, showHeading
       <div className="selected-categories">
         <div className="selected-category-chip-list">
           {selectedCategoryRecords.length === 0 && <span className="selected-category-empty">No categories selected</span>}
-          {selectedCategoryRecords.map((entry) => {
+          {selectedCategoryRecords.map((entry, index) => {
             const categoryLabel = formatCategoryLabel(entry.category);
             const subCategoryLabel = formatCategoryLabel(entry.subCategory);
+            const isPrimary = index === 0;
             return (
-              <button
+              <div
                 key={entry.id}
-                type="button"
                 className="selected-category-chip"
-                onClick={() => handleRemoveCategory(entry.id)}
-                style={createCategoryStyleVars(categoryColorMap.get(entry.id))}
-                title={`${categoryLabel} ${subCategoryLabel}`}
+                style={{ 
+                  ...createCategoryStyleVars(categoryColorMap.get(entry.id)),
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  position: 'relative'
+                }}
+                onMouseEnter={(e) => {
+                  const star = e.currentTarget.querySelector('.category-star-button') as HTMLElement;
+                  if (star && !isPrimary) {
+                    star.style.opacity = '1';
+                    star.style.width = 'auto';
+                    star.style.padding = '0 4px';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  const star = e.currentTarget.querySelector('.category-star-button') as HTMLElement;
+                  if (star && !isPrimary) {
+                    star.style.opacity = '0';
+                    star.style.width = '0';
+                    star.style.padding = '0';
+                  }
+                }}
+                title={isPrimary ? `${categoryLabel} ${subCategoryLabel} (Primary - used for organization)` : `${categoryLabel} ${subCategoryLabel}`}
               >
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSetPrimaryCategory(entry.id);
+                  }}
+                  className="category-star-button"
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: isPrimary ? '0 4px' : '0',
+                    margin: 0,
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    opacity: isPrimary ? 1 : 0,
+                    width: isPrimary ? 'auto' : '0',
+                    overflow: 'hidden',
+                    transition: 'opacity 0.2s ease, width 0.2s ease, padding 0.2s ease',
+                    color: isPrimary ? 'gold' : 'currentColor',
+                    flexShrink: 0
+                  }}
+                  title={isPrimary ? 'Primary category' : 'Set as primary category'}
+                  aria-label={isPrimary ? 'Primary category' : 'Set as primary category'}
+                >
+                  {isPrimary ? '★' : '☆'}
+                </button>
                 <span className="selected-category-chip-label">
                   <span className="category-label category-label--muted">{categoryLabel}</span>
                   <span className="category-label category-label--primary">{subCategoryLabel}</span>
                 </span>
-                <span className="selected-category-chip-remove" aria-hidden="true">×</span>
-              </button>
+                <button
+                  type="button"
+                  className="selected-category-chip-remove-button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveCategory(entry.id);
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: '0 4px',
+                    cursor: 'pointer',
+                    fontSize: '18px',
+                    lineHeight: 1
+                  }}
+                  aria-label="Remove category"
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              </div>
             );
           })}
         </div>
