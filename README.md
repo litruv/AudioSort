@@ -1,7 +1,7 @@
 # AudioSort
 [![Build/release](https://github.com/litruv/AudioSort/actions/workflows/build.yml/badge.svg)](https://github.com/litruv/AudioSort/actions/workflows/build.yml)
 
-A desktop application for organizing, tagging, and managing WAV audio files with Universal Category System (UCS) support.
+A desktop application for organizing, tagging, and managing WAV audio files with Universal Category System (UCS) support, featuring advanced waveform editing and audio splitting capabilities.
 
 ![AudioSort Interface](repoimages/interface.png)
 
@@ -27,8 +27,18 @@ A desktop application for organizing, tagging, and managing WAV audio files with
 
 ![Multi-file Editing](repoimages/multiediting.png)
 
+### Waveform Editor
+- Visual waveform editing with playback controls
+- Segment-based audio splitting and trimming
+- Real-time preview with zoom and pan controls
+- Export individual segments with automatic naming
+- Non-destructive editing workflow
+
+![Waveform Editor](repoimages/editor.png)
+
 ### Beautiful Interface
 - Real-time waveform visualization with dynamic color-coding based on RMS levels
+- Waveform editor for splitting and trimming audio
 - Smooth animations and polished drag-and-drop interactions
 - Responsive file list with keyboard navigation (Arrow keys, Ctrl+A)
 - Dark theme optimized for long sessions
