@@ -18,6 +18,7 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux",
     "postinstall": "patch-package"
   },
   "dependencies": {
@@ -66,6 +67,30 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm",
+        "snap"
+      ],
+      "icon": "build/icon.png",
+      "category": "AudioVideo",
+      "description": "Audio sorting and management application",
+      "mimeTypes": [
+        "audio/wav",
+        "audio/x-wav"
+      ]
+    },
+    "snap": {
+      "summary": "Audio sorting and management application",
+      "plugs": [
+        "default",
+        "audio-playback",
+        "home",
+        "removable-media"
+      ]
     },
     "extraResources": [
       {
