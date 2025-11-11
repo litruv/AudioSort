@@ -158,4 +158,3 @@ Edit `package.json` `build` section to customize:
 ### Database Location
 User data is stored in:
 - **Windows**: `%APPDATA%/AudioSort/`
-- **Linux**: `~/.config/AudioSort/`
