@@ -23,10 +23,10 @@
     "csv-parse": "^5.5.5",
     "fast-glob": "^3.3.2",
     "fuse.js": "^6.6.2",
-  "music-metadata": "^10.5.0",
-  "standardized-audio-context": "^25.3.12",
+    "music-metadata": "^10.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "standardized-audio-context": "^25.3.12",
     "wavefile": "^11.0.0"
   },
   "devDependencies": {
@@ -37,12 +37,12 @@
     "@vitejs/plugin-react": "^4.3.3",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
-    "electron": "^32.0.0",
+    "electron": "^39.1.2",
     "electron-builder": "^26.0.12",
     "tree-kill": "^1.2.2",
     "tsx": "^4.15.7",
     "typescript": "^5.3.3",
-    "vite": "^5.1.6"
+    "vite": "^7.2.2"
   },
   "build": {
     "appId": "com.audiosort.app",
@@ -55,7 +55,9 @@
       "output": "release"
     },
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "build/icon.ico"
     },
     "nsis": {
