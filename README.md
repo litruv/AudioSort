@@ -16,6 +16,7 @@ A desktop application for organizing, tagging, and managing WAV audio files with
 ### Powerful Search & Organization
 - Fuzzy search across filenames, tags, categories, and metadata
 - Filter by category or view untagged files
+- Quick "JUST SPLIT" filter surfaces freshly generated segments for rapid QC
 - Multi-select support for batch operations
 - Custom naming with automatic conflict resolution
 
@@ -45,19 +46,6 @@ A desktop application for organizing, tagging, and managing WAV audio files with
 
 ![Smooth UI Demo](repoimages/smoothui.gif)
 
-### Smart Library Management
-- Automatic library scanning and indexing
-- MD5 checksums for duplicate detection
-- Metadata caching for instant access
-- SQLite database for fast queries and reliable storage
-
-## Technology Stack
-
-- **Frontend**: React 18, TypeScript, Vite
-- **Backend**: Electron 29, Node.js
-- **Database**: better-sqlite3 with WAL mode
-- **Audio Processing**: WaveFile, music-metadata
-- **Search**: Fuse.js for fuzzy search
 
 ## Installation
 
