@@ -55,7 +55,6 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/*.rpm
-            release/*.snap
 
   release:
     needs: [build-windows, build-linux]
@@ -80,7 +79,6 @@ jobs:
             *.AppImage
             *.deb
             *.rpm
-            *.snap
           draft: false
           prerelease: false
         env:

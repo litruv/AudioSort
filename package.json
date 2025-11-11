@@ -76,8 +76,7 @@
       "target": [
         "AppImage",
         "deb",
-        "rpm",
-        "snap"
+        "rpm"
       ],
       "icon": "build/icon.png",
       "category": "AudioVideo",
@@ -85,16 +84,6 @@
       "mimeTypes": [
         "audio/wav",
         "audio/x-wav"
-      ]
-    },
-    "snap": {
-      "summary": "Audio sorting and management application",
-      "publish": null,
-      "plugs": [
-        "default",
-        "audio-playback",
-        "home",
-        "removable-media"
       ]
     },
     "extraResources": [
