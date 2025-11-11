@@ -1,6 +1,11 @@
 import { app } from 'electron';
 import { MainApp } from './MainApp';
 
+// Disable GPU acceleration on Linux to avoid graphics driver issues
+if (process.platform === 'linux') {
+  app.disableHardwareAcceleration();
+}
+
 const mainApp = new MainApp();
 
 app.whenReady()
