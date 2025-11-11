@@ -4,7 +4,8 @@
   "description": "Electron audio sorting application with fuzzy search, tagging, library management, and advanced waveform editing with audio splitting capabilities for WAV files.",
   "author": {
     "name": "litruv",
-    "email": "litruv@gmail.com"
+    "email": "litruv@example.com",
+    "url": "https://lit.ruv.wtf"
   },
   "main": "dist/main/main/index.js",
   "type": "commonjs",
