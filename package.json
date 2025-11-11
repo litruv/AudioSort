@@ -75,7 +75,7 @@
         "rpm",
         "snap"
       ],
-      "icon": "build/icon.png",
+      "icon": "build/icon.ico",
       "category": "AudioVideo",
       "description": "Audio sorting and management application",
       "mimeTypes": [
