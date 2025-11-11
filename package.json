@@ -2,7 +2,10 @@
   "name": "audio-sort",
   "version": "0.5.2",
   "description": "Electron audio sorting application with fuzzy search, tagging, library management, and advanced waveform editing with audio splitting capabilities for WAV files.",
-  "author": "litruv",
+  "author": {
+    "name": "litruv",
+    "email": "litruv@gmail.com"
+  },
   "main": "dist/main/main/index.js",
   "type": "commonjs",
   "scripts": {
@@ -85,6 +88,7 @@
     },
     "snap": {
       "summary": "Audio sorting and management application",
+      "publish": null,
       "plugs": [
         "default",
         "audio-playback",
