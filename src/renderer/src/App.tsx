@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type JSX } from 'react';
 import FileList from './components/FileList';
 import FileDetailPanel from './components/FileDetailPanel';
 import MultiFileEditor from './components/MultiFileEditor';
@@ -274,8 +274,7 @@ function App(): JSX.Element {
     setActiveTab('listen');
   };
 
-  const handleEditModeSplitComplete = async (created: AudioFileSummary[]) => {
-    await libraryStore.rescan();
+  const handleEditModeSplitComplete = (created: AudioFileSummary[]) => {
     setActiveTab('listen');
     if (created.length > 0) {
       libraryStore.selectFile(created[0].id);
@@ -294,6 +293,7 @@ function App(): JSX.Element {
           categories={library.categories}
           files={library.files}
           activeFilter={library.categoryFilter}
+          justSplitIds={library.justSplitFileIds}
           onSelect={handleCategorySelect}
           onDropFiles={handleDropFilesToCategory}
         />

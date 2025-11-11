@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { AudioFileSummary, CategoryRecord } from '../../../shared/models';
-import { CATEGORY_FILTER_UNTAGGED, type CategoryFilterValue } from '../stores/LibraryStore';
+import { CATEGORY_FILTER_JUST_SPLIT, CATEGORY_FILTER_UNTAGGED, type CategoryFilterValue } from '../stores/LibraryStore';
 import {
   buildCategorySwatch,
   createCategoryStyleVars,
@@ -11,6 +11,8 @@ export interface CategorySidebarProps {
   categories: CategoryRecord[];
   files: AudioFileSummary[];
   activeFilter: CategoryFilterValue;
+  /** Identifiers of files created during the most recent split action. */
+  justSplitIds: number[];
   onSelect(filter: CategoryFilterValue): void;
   onDropFiles?(fileIds: number[], categoryId: string): void;
 }
@@ -37,7 +39,7 @@ function deriveCounts(files: AudioFileSummary[]): {
   };
 }
 
-export function CategorySidebar({ categories, files, activeFilter, onSelect, onDropFiles }: CategorySidebarProps): JSX.Element {
+export function CategorySidebar({ categories, files, activeFilter, justSplitIds, onSelect, onDropFiles }: CategorySidebarProps): JSX.Element {
   const { total, untagged, categoryCounts } = deriveCounts(files);
   const swatchMap = useMemo(() => {
     const map = new Map<string, ReturnType<typeof buildCategorySwatch>>();
@@ -103,6 +105,17 @@ export function CategorySidebar({ categories, files, activeFilter, onSelect, onD
           <span className="category-sidebar__label">TO TAG</span>
           <span className="category-sidebar__count">{untagged}</span>
         </button>
+        {justSplitIds.length > 0 ? (
+          <button
+            type="button"
+            className="category-sidebar__item"
+            data-active={activeFilter === CATEGORY_FILTER_JUST_SPLIT}
+            onClick={() => handleSelect(CATEGORY_FILTER_JUST_SPLIT)}
+          >
+            <span className="category-sidebar__label">JUST SPLIT</span>
+            <span className="category-sidebar__count">{justSplitIds.length}</span>
+          </button>
+        ) : null}
       </div>
       {sortedGroups.map(([groupName, records]) => {
         const sortedRecords = records

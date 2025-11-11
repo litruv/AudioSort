@@ -1,4 +1,4 @@
-import Fuse from 'fuse.js';
+import Fuse, { type FuseResult, type IFuseOptions } from 'fuse.js';
 import { AudioFileSummary } from '../../shared/models';
 import { DatabaseService } from './DatabaseService';
 import { TagService } from './TagService';
@@ -76,7 +76,7 @@ export class SearchService {
 
     return fuseInstance
       .search(remainingQuery)
-      .map((result: Fuse.FuseResult<AudioFileSummary>) => result.item)
+      .map((result: FuseResult<AudioFileSummary>) => result.item)
       .filter((file) => (filters.length === 0 ? true : this.matchesAdvancedFilters(file, filters)));
   }
 
@@ -103,7 +103,7 @@ export class SearchService {
   /**
    * Provides the standard Fuse configuration used by the service.
    */
-  private createFuseOptions(): Fuse.IFuseOptions<AudioFileSummary> {
+  private createFuseOptions(): IFuseOptions<AudioFileSummary> {
     return {
       includeScore: true,
       threshold: 0.35,
@@ -114,7 +114,7 @@ export class SearchService {
         { name: 'tags', weight: 0.2 },
         { name: 'categories', weight: 0.1 }
       ]
-    } satisfies Fuse.IFuseOptions<AudioFileSummary>;
+    } satisfies IFuseOptions<AudioFileSummary>;
   }
 
   /**

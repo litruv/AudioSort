@@ -163,8 +163,8 @@ export class TagService {
         .filter((entry) => entry.length > 0);
 
       const tagText = tagValuesList.length > 0 ? tagValuesList.join('; ') : null;
-      const categoryText = categoryValuesList.length > 0 ? categoryValuesList.join('; ') : null;
-      const primaryCategory = categoryValuesList.at(0) ?? null;
+  const categoryText = categoryValuesList.length > 0 ? categoryValuesList.join('; ') : null;
+  const primaryCategory = categoryValuesList.length > 0 ? categoryValuesList[0] : null;
       const trimmedTitle = metadata.title?.toString().trim();
       const effectiveTitle = trimmedTitle && trimmedTitle.length > 0 ? trimmedTitle : null;
       const trimmedAuthor = metadata.author?.toString().trim();

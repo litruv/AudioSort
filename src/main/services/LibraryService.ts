@@ -12,6 +12,15 @@ import { SearchService } from './SearchService';
 import { WaveFile } from 'wavefile';
 import { OrganizationService } from './OrganizationService';
 
+type MusicMetadataParser = (path: string, options?: { duration?: boolean }) => Promise<{
+  format: { duration?: number | null; sampleRate?: number | null; bitsPerSample?: number | null };
+  common: { comment?: unknown[]; genre?: unknown[]; subtitle?: unknown };
+}>;
+
+type MusicMetadataNamespace = Partial<{ parseFile: MusicMetadataParser }> & {
+  default?: Partial<{ parseFile: MusicMetadataParser }>;
+};
+
 interface CsvCategoryRow {
   Category: string;
   SubCategory: string;
@@ -32,6 +41,7 @@ export class LibraryService {
   private metadataSuggestionCache: { authors: Set<string> } | null = null;
   private readonly waveformPreviewCache = new Map<number, { modifiedAt: number; pointCount: number; samples: number[]; rms: number }>();
   private offlineAudioContextCtor: (new (channelCount: number, length: number, sampleRate: number) => any) | null = null;
+  private musicMetadataParseFile: MusicMetadataParser | null = null;
   public constructor(
     private readonly database: DatabaseService,
     private readonly settings: SettingsService,
@@ -1343,6 +1353,29 @@ export class LibraryService {
   }
 
   /**
+   * Resolves and caches the music-metadata parseFile implementation.
+   */
+  private async resolveMusicMetadataParser(): Promise<MusicMetadataParser> {
+    if (this.musicMetadataParseFile) {
+      return this.musicMetadataParseFile;
+    }
+
+    const namespace = (await import('music-metadata')) as MusicMetadataNamespace;
+    const candidate = typeof namespace.parseFile === 'function'
+      ? namespace.parseFile
+      : namespace.default && typeof namespace.default.parseFile === 'function'
+        ? namespace.default.parseFile
+        : null;
+
+    if (!candidate) {
+      throw new Error('music-metadata parseFile not found');
+    }
+
+    this.musicMetadataParseFile = candidate;
+    return candidate;
+  }
+
+  /**
    * Extracts metadata from the WAV container, falling back to defaults when parsing fails.
    */
   private async extractAudioMetadata(filePath: string): Promise<{
@@ -1353,22 +1386,8 @@ export class LibraryService {
     categories: string[];
   }> {
     try {
-      const mmImport = await import('music-metadata');
-      const mm = (mmImport as { default?: unknown }).default ?? mmImport;
-      
-      const loadMusicMetadata = typeof mm === 'object' && mm !== null && 'loadMusicMetadata' in mm
-        ? (mm as { loadMusicMetadata: () => Promise<{ parseFile: (path: string, opts?: { duration?: boolean }) => Promise<{
-            format: { duration?: number | null; sampleRate?: number | null; bitsPerSample?: number | null };
-            common: { comment?: unknown[]; genre?: unknown[]; subtitle?: unknown };
-          }> }> }).loadMusicMetadata
-        : null;
-      
-      if (!loadMusicMetadata) {
-        throw new Error('music-metadata loadMusicMetadata not found');
-      }
-      
-      const musicMetadata = await loadMusicMetadata();
-      const metadata = await musicMetadata.parseFile(filePath, { duration: true });
+      const parseFile = await this.resolveMusicMetadataParser();
+      const metadata = await parseFile(filePath, { duration: true });
       const infoTags = this.tagService.readInfoTags(filePath);
       const splitInfoValues = (input: string | undefined): string[] =>
         input
