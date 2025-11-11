@@ -75,8 +75,7 @@
     "linux": {
       "target": [
         "AppImage",
-        "deb",
-        "rpm"
+        "deb"
       ],
       "icon": "build/icon.png",
       "category": "AudioVideo",

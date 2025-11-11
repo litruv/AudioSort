@@ -58,7 +58,6 @@ jobs:
           path: |
             release/*.AppImage
             release/*.deb
-            release/*.rpm
 
   release:
     needs: [build-windows, build-linux]
@@ -82,7 +81,6 @@ jobs:
             *.exe
             *.AppImage
             *.deb
-            *.rpm
           draft: false
           prerelease: false
         env:
