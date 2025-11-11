@@ -1,6 +1,6 @@
 {
   "name": "audio-sort",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Electron audio sorting application with fuzzy search, tagging, library management, and advanced waveform editing with audio splitting capabilities for WAV files.",
   "main": "dist/main/main/index.js",
   "type": "commonjs",
