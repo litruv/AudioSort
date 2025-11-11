@@ -1,7 +1,7 @@
 # AudioSort
-[![Build/release](https://github.com/litruv/AudioSort/actions/workflows/build.yml/badge.svg)](https://github.com/litruv/AudioSort/actions/workflows/build.yml)
+[![Build All Platforms](https://github.com/litruv/AudioSort/actions/workflows/build-all.yml/badge.svg)](https://github.com/litruv/AudioSort/actions/workflows/build-all.yml)
 
-A desktop application for organizing, tagging, and managing WAV audio files with Universal Category System (UCS) support, featuring advanced waveform editing and audio splitting capabilities.
+A cross-platform desktop application for organizing, tagging, and managing WAV audio files with Universal Category System (UCS) support, featuring advanced waveform editing and audio splitting capabilities.
 
 ![AudioSort Interface](repoimages/interface.png)
 
@@ -49,8 +49,28 @@ A desktop application for organizing, tagging, and managing WAV audio files with
 
 ## Installation
 
-### From Release
+### Windows
 Download the latest `AudioSort Setup.exe` from the [Releases](../../releases) page and run the installer.
+
+### Linux
+
+#### AppImage (Universal)
+```bash
+# Download from Releases page
+chmod +x AudioSort-*.AppImage
+./AudioSort-*.AppImage
+```
+
+#### Debian/Ubuntu (.deb)
+```bash
+sudo dpkg -i audio-sort_*.deb
+sudo apt-get install -f  # Install dependencies if needed
+```
+
+#### Fedora/RHEL (.rpm)
+```bash
+sudo dnf install ./audio-sort-*.rpm
+```
 
 ### From Source
 
@@ -126,23 +146,27 @@ AudioSort/
 
 ### Scripts
 ```bash
-npm run dev      # Start development server with hot reload
-npm run build    # Build renderer and main process
-npm run lint     # Type-check with TypeScript
-npm run pack     # Package without installer
-npm run dist     # Create distributable
-npm run dist:win # Create Windows installer
+npm run dev        # Start development server with hot reload
+npm run build      # Build renderer and main process
+npm run lint       # Type-check with TypeScript
+npm run pack       # Package without installer
+npm run dist       # Create distributable
+npm run dist:win   # Create Windows installer
+npm run dist:linux # Create Linux packages (AppImage, deb, rpm)
 ```
 
-## Configuration
+## Linux Distribution
 
-### Build Configuration
-Edit `package.json` `build` section to customize:
-- Application name and ID
-- Icon and branding
-- Installer options
-- File associations
+For detailed information about building and distributing on Linux, see [LINUX_BUILD.md](LINUX_BUILD.md).
+
+Supported formats:
+- **AppImage** - Universal, runs on any distribution
+- **DEB** - Debian, Ubuntu, and derivatives
+- **RPM** - Fedora, RHEL, CentOS, openSUSE
+
+## Configuration
 
 ### Database Location
 User data is stored in:
 - **Windows**: `%APPDATA%/AudioSort/`
+- **Linux**: `~/.config/AudioSort/`
