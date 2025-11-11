@@ -32,6 +32,10 @@ export interface SegmentDraft {
   metadata: SegmentMetadataDraft;
   /** Color used for visual identification in UI and waveform. */
   color: string;
+  /** Fade in duration in milliseconds. */
+  fadeInMs: number;
+  /** Fade out duration in milliseconds. */
+  fadeOutMs: number;
 }
 
 /**
@@ -57,6 +61,8 @@ export function toSplitRequest(segment: SegmentDraft): SplitSegmentRequest {
       rating: segment.metadata.rating ?? undefined,
       tags: segment.metadata.tags,
       categories: segment.metadata.categories
-    }
+    },
+    fadeInMs: segment.fadeInMs > 0 ? Math.round(segment.fadeInMs) : undefined,
+    fadeOutMs: segment.fadeOutMs > 0 ? Math.round(segment.fadeOutMs) : undefined
   };
 }

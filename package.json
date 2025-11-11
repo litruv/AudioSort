@@ -23,7 +23,8 @@
     "csv-parse": "^5.5.5",
     "fast-glob": "^3.3.2",
     "fuse.js": "^6.6.2",
-    "music-metadata": "^10.5.0",
+  "music-metadata": "^10.5.0",
+  "standardized-audio-context": "^25.3.12",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "wavefile": "^11.0.0"

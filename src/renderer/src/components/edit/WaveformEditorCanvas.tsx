@@ -21,6 +21,8 @@ export interface WaveformEditorCanvasProps {
   onPlayFromCursor(startMs: number): void;
   /** Location of the active playback cursor relative to the source audio, if playing. */
   playbackCursorMs: number | null;
+  /** Invoked when fade in/out values change. */
+  onUpdateFade(segmentId: string, fadeInMs: number, fadeOutMs: number): void;
 }
 
 interface DraftSelection {
@@ -32,7 +34,8 @@ type DragState =
   | { type: 'none' }
   | { type: 'creating'; anchorMs: number; pointerMs: number }
   | { type: 'resizing'; segmentId: string; handle: 'start' | 'end' }
-  | { type: 'panning'; startViewportMs: number; pointerStartX: number };
+  | { type: 'panning'; startViewportMs: number; pointerStartX: number }
+  | { type: 'fade'; segmentId: string; handle: 'fadeIn' | 'fadeOut'; initialMs: number };
 
 const MIN_SEGMENT_MS = 50;
 const MIN_VIEWPORT_MS = 200;
@@ -53,7 +56,8 @@ export function WaveformEditorCanvas({
   onCreateSegment,
   onResizeSegment,
   onPlayFromCursor,
-  playbackCursorMs
+  playbackCursorMs,
+  onUpdateFade
 }: WaveformEditorCanvasProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragStateRef = useRef<DragState>({ type: 'none' });
@@ -179,13 +183,121 @@ export function WaveformEditorCanvas({
       }
       context.fillRect(startX, 0, endX - startX, height);
       
+      // Draw fade curves as bezier splines (volume envelope visualization)
+      const segmentDurationMs = segment.endMs - segment.startMs;
+      const fadeInMs = Math.min(segment.fadeInMs, segmentDurationMs / 2);
+      const fadeOutMs = Math.min(segment.fadeOutMs, segmentDurationMs / 2);
+      
+      const fadeLineColor = isSelected ? '#ffcc00' : (rgbMatch ? `rgb(${parseInt(rgbMatch[1], 16)}, ${parseInt(rgbMatch[2], 16)}, ${parseInt(rgbMatch[3], 16)})` : '#ffffff');
+      
+      // Draw fade in curve (volume ramp from 0 to 1)
+      if (fadeInMs > 0) {
+        const fadeInRatio = fadeInMs / viewportDuration;
+        const fadeInWidth = fadeInRatio * width;
+        const fadeInEndX = startX + fadeInWidth;
+        
+        if (fadeInEndX > startX && fadeInEndX <= endX) {
+          context.strokeStyle = fadeLineColor;
+          context.lineWidth = 2.5;
+          context.beginPath();
+          
+          // Start from bottom (silence) and curve up to full volume
+          context.moveTo(startX, height);
+          
+          // Smooth S-curve using bezier - starts slow, accelerates, then eases in
+          const cp1X = startX + fadeInWidth * 0.3;
+          const cp1Y = height * 0.8;
+          const cp2X = startX + fadeInWidth * 0.7;
+          const cp2Y = height * 0.2;
+          
+          context.bezierCurveTo(
+            cp1X, cp1Y,
+            cp2X, cp2Y,
+            fadeInEndX, 0
+          );
+          context.stroke();
+          
+          // Add a subtle fill under the curve
+          context.globalAlpha = 0.1;
+          context.fillStyle = fadeLineColor;
+          context.lineTo(fadeInEndX, height);
+          context.lineTo(startX, height);
+          context.closePath();
+          context.fill();
+          context.globalAlpha = 1.0;
+        }
+      }
+      
+      // Draw fade out curve (volume ramp from 1 to 0)
+      if (fadeOutMs > 0) {
+        const fadeOutRatio = fadeOutMs / viewportDuration;
+        const fadeOutWidth = fadeOutRatio * width;
+        const fadeOutStartX = endX - fadeOutWidth;
+        
+        if (fadeOutStartX >= startX && fadeOutStartX < endX) {
+          context.strokeStyle = fadeLineColor;
+          context.lineWidth = 2.5;
+          context.beginPath();
+          
+          // Start from top (full volume) and curve down to silence
+          context.moveTo(fadeOutStartX, 0);
+          
+          // Smooth S-curve using bezier
+          const cp1X = fadeOutStartX + fadeOutWidth * 0.3;
+          const cp1Y = height * 0.2;
+          const cp2X = fadeOutStartX + fadeOutWidth * 0.7;
+          const cp2Y = height * 0.8;
+          
+          context.bezierCurveTo(
+            cp1X, cp1Y,
+            cp2X, cp2Y,
+            endX, height
+          );
+          context.stroke();
+          
+          // Add a subtle fill under the curve
+          context.globalAlpha = 0.1;
+          context.fillStyle = fadeLineColor;
+          context.lineTo(endX, height);
+          context.lineTo(fadeOutStartX, height);
+          context.closePath();
+          context.fill();
+          context.globalAlpha = 1.0;
+        }
+      }
+      
       // Use segment color for handles
       context.fillStyle = isSelected ? '#ffcc00' : color;
       context.fillRect(startX - HANDLE_WIDTH_PX / 2, 0, HANDLE_WIDTH_PX, height);
       context.fillRect(endX - HANDLE_WIDTH_PX / 2, 0, HANDLE_WIDTH_PX, height);
+      
+      // Draw corner handles for fade control (DaVinci Resolve style)
+      const dragState = dragStateRef.current;
+      const isFadeDragging = dragState.type === 'fade' && dragState.segmentId === segment.id;
+      const showFadeHandles = isSelected || isFadeDragging;
+      const cornerHandleSize = 12;
+      
+      if (showFadeHandles) {
+        // Top-left corner handle for fade in
+        context.fillStyle = fadeInMs > 0 ? fadeLineColor : 'rgba(255, 255, 255, 0.3)';
+        context.beginPath();
+        context.moveTo(startX, 0);
+        context.lineTo(startX + cornerHandleSize, 0);
+        context.lineTo(startX, cornerHandleSize);
+        context.closePath();
+        context.fill();
+        
+        // Top-right corner handle for fade out
+        context.fillStyle = fadeOutMs > 0 ? fadeLineColor : 'rgba(255, 255, 255, 0.3)';
+        context.beginPath();
+        context.moveTo(endX, 0);
+        context.lineTo(endX - cornerHandleSize, 0);
+        context.lineTo(endX, cornerHandleSize);
+        context.closePath();
+        context.fill();
+      }
 
       // Draw segment labels when being resized or hovered
-      const dragState = dragStateRef.current;
       const shouldShowLabels = (dragState.type === 'resizing' && dragState.segmentId === segment.id) || 
                                (hoveredSegmentId === segment.id && dragState.type === 'none');
       
@@ -449,6 +561,32 @@ export function WaveformEditorCanvas({
 
     const viewport = viewportRef.current;
     const toleranceMs = viewport.durationMs * (HANDLE_WIDTH_PX / Math.max(canvas?.clientWidth ?? 1, 1));
+    
+    // Check for fade handles first (higher priority)
+    const rect = canvas?.getBoundingClientRect();
+    const pointerY = rect ? event.clientY - rect.top : 0;
+    const canvasWidth = canvas?.clientWidth ?? 1;
+    const canvasHeight = canvas?.clientHeight ?? 1;
+    const fadeHit = findFadeHandle(
+      pointerMs, 
+      pointerY, 
+      segments, 
+      viewport.startMs, 
+      viewport.durationMs, 
+      canvasWidth, 
+      canvasHeight
+    );
+    if (fadeHit) {
+      onSelectSegment(fadeHit.segmentId);
+      const segment = segments.find((s) => s.id === fadeHit.segmentId);
+      const initialMs = fadeHit.handle === 'fadeIn' 
+        ? (segment?.fadeInMs ?? 0)
+        : (segment?.fadeOutMs ?? 0);
+      dragStateRef.current = { type: 'fade', segmentId: fadeHit.segmentId, handle: fadeHit.handle, initialMs };
+      clickContextRef.current = null;
+      return;
+    }
+    
     const hit = findSegmentHandle(pointerMs, segments, toleranceMs);
 
     if (hit) {
@@ -590,6 +728,24 @@ export function WaveformEditorCanvas({
       } else {
         const nextEnd = clamp(pointerMs, Math.max(minEnd, segment.startMs + MIN_SEGMENT_MS), durationMs);
         onResizeSegment(segment.id, segment.startMs, nextEnd);
+      }
+      return;
+    }
+    
+    if (state.type === 'fade') {
+      const segment = segments.find((entry) => entry.id === state.segmentId);
+      if (!segment) {
+        return;
+      }
+      const segmentDurationMs = segment.endMs - segment.startMs;
+      const maxFade = segmentDurationMs / 2;
+      
+      if (state.handle === 'fadeIn') {
+        const fadeInMs = clamp(pointerMs - segment.startMs, 0, maxFade);
+        onUpdateFade(segment.id, fadeInMs, segment.fadeOutMs);
+      } else {
+        const fadeOutMs = clamp(segment.endMs - pointerMs, 0, maxFade);
+        onUpdateFade(segment.id, segment.fadeInMs, fadeOutMs);
       }
     }
   };
@@ -849,6 +1005,73 @@ function findSegmentHandle(
     }
     if (Math.abs(pointerMs - segment.endMs) <= toleranceMs) {
       return { segmentId: segment.id, handle: 'end' };
+    }
+  }
+  return null;
+}
+
+/**
+ * Detects if the pointer is over a corner fade handle for a segment.
+ * Corner handles are triangular regions at the top-left and top-right of segments.
+ *
+ * @param pointerMs - Absolute timestamp within the audio file to test.
+ * @param pointerY - Y coordinate of the pointer in canvas pixels.
+ * @param segments - Segment collection to evaluate.
+ * @param viewportStartMs - Start of the current viewport.
+ * @param viewportDurationMs - Duration of the current viewport.
+ * @param canvasWidth - Width of the canvas in pixels.
+ * @param canvasHeight - Height of the canvas in pixels.
+ * @returns Fade handle information or null if no corner handle is under the pointer.
+ */
+function findFadeHandle(
+  pointerMs: number,
+  pointerY: number,
+  segments: SegmentDraft[],
+  viewportStartMs: number,
+  viewportDurationMs: number,
+  canvasWidth: number,
+  canvasHeight: number
+): { segmentId: string; handle: 'fadeIn' | 'fadeOut' } | null {
+  const cornerHandleSize = 12;
+  const maxCornerY = 25; // Extended hit area
+  
+  for (const segment of segments) {
+    const startRatio = (segment.startMs - viewportStartMs) / viewportDurationMs;
+    const endRatio = (segment.endMs - viewportStartMs) / viewportDurationMs;
+    const startX = Math.max(0, Math.min(canvasWidth, startRatio * canvasWidth));
+    const endX = Math.max(0, Math.min(canvasWidth, endRatio * canvasWidth));
+    
+    if (endX <= startX) {
+      continue;
+    }
+    
+    // Check if pointer is in the segment vertically
+    if (pointerMs < segment.startMs || pointerMs > segment.endMs) {
+      continue;
+    }
+    
+    // Convert pointerMs to X coordinate
+    const pointerRatio = (pointerMs - viewportStartMs) / viewportDurationMs;
+    const pointerX = pointerRatio * canvasWidth;
+    
+    // Check top-left corner (fade in)
+    if (pointerY <= maxCornerY && pointerX >= startX && pointerX <= startX + cornerHandleSize * 2) {
+      // Triangle hit test: point is in triangle if it's above the diagonal line
+      const relX = pointerX - startX;
+      const relY = pointerY;
+      if (relX + relY <= cornerHandleSize * 1.5) {
+        return { segmentId: segment.id, handle: 'fadeIn' };
+      }
+    }
+    
+    // Check top-right corner (fade out)
+    if (pointerY <= maxCornerY && pointerX <= endX && pointerX >= endX - cornerHandleSize * 2) {
+      // Triangle hit test: point is in triangle if it's above the diagonal line
+      const relX = endX - pointerX;
+      const relY = pointerY;
+      if (relX + relY <= cornerHandleSize * 1.5) {
+        return { segmentId: segment.id, handle: 'fadeOut' };
+      }
     }
   }
   return null;

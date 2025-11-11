@@ -189,7 +189,39 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
         const playbackLengthMs = absoluteEndMs - playbackStartMs;
         const source = context.createBufferSource();
         source.buffer = buffer;
-        source.connect(context.destination);
+        
+        // Create a gain node for fade control
+        const gainNode = context.createGain();
+        source.connect(gainNode);
+        gainNode.connect(context.destination);
+        
+        // Apply fade in/out if playing a segment
+        if (request.mode === 'segment' && request.segmentId) {
+          const segment = segments.find((s) => s.id === request.segmentId);
+          if (segment) {
+            const fadeInMs = Math.min(segment.fadeInMs, playbackLengthMs / 2);
+            const fadeOutMs = Math.min(segment.fadeOutMs, playbackLengthMs / 2);
+            const currentTime = context.currentTime;
+            
+            // Set initial gain
+            gainNode.gain.setValueAtTime(fadeInMs > 0 ? 0 : 1, currentTime);
+            
+            // Apply fade in
+            if (fadeInMs > 0) {
+              const fadeInEndTime = currentTime + (fadeInMs / 1000);
+              gainNode.gain.linearRampToValueAtTime(1, fadeInEndTime);
+            }
+            
+            // Apply fade out
+            if (fadeOutMs > 0) {
+              const fadeOutStartTime = currentTime + ((playbackLengthMs - fadeOutMs) / 1000);
+              const fadeOutEndTime = currentTime + (playbackLengthMs / 1000);
+              gainNode.gain.setValueAtTime(1, fadeOutStartTime);
+              gainNode.gain.linearRampToValueAtTime(0, fadeOutEndTime);
+            }
+          }
+        }
+        
         source.start(0, playbackStartMs / 1000, playbackLengthMs / 1000);
 
         playbackInfoRef.current = { ...request };
@@ -230,7 +262,7 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
         stopPlaybackCursorTracking();
       }
     },
-    [ensureAudioContext, loadAudioBuffer, stopActiveSource, schedulePlaybackCursorUpdate, stopPlaybackCursorTracking]
+    [ensureAudioContext, loadAudioBuffer, stopActiveSource, schedulePlaybackCursorUpdate, stopPlaybackCursorTracking, segments]
   );
 
   const pausePlayback = useCallback(() => {
@@ -403,7 +435,9 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
       endMs: end,
       label: `Segment ${segments.length + 1}`,
       metadata: buildDefaultMetadata(file, baseMetadata),
-      color: generateSegmentColor(segments.length)
+      color: generateSegmentColor(segments.length),
+      fadeInMs: 0,
+      fadeOutMs: 0
     };
     setSegments((current) => {
       const next = [...current, newSegment].sort((a, b) => a.startMs - b.startMs);
@@ -462,6 +496,16 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
       )
     );
   };
+
+  const handleUpdateFade = useCallback((segmentId: string, fadeInMs: number, fadeOutMs: number) => {
+    setSegments((current) =>
+      current.map((segment) =>
+        segment.id === segmentId
+          ? { ...segment, fadeInMs, fadeOutMs }
+          : segment
+      )
+    );
+  }, []);
 
   const handleRemoveSegment = useCallback((segmentId: string) => {
     setSegments((current) => current.filter((segment) => segment.id !== segmentId));
@@ -570,6 +614,7 @@ export function EditModePanel({ file, categories, onClose, onSplitComplete }: Ed
                   onResizeSegment={handleResizeSegment}
                   onPlayFromCursor={playFromCursor}
                   playbackCursorMs={playbackCursorMs}
+                  onUpdateFade={handleUpdateFade}
                 />
               )}
             </div>

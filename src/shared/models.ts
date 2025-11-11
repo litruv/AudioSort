@@ -138,4 +138,8 @@ export interface SplitSegmentRequest {
   label?: string;
   /** Metadata overrides to apply to the generated file. */
   metadata?: SegmentMetadataInput;
+  /** Fade in duration in milliseconds. */
+  fadeInMs?: number;
+  /** Fade out duration in milliseconds. */
+  fadeOutMs?: number;
 }

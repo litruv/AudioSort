@@ -31,6 +31,7 @@ export class LibraryService {
   private readonly organization: OrganizationService;
   private metadataSuggestionCache: { authors: Set<string> } | null = null;
   private readonly waveformPreviewCache = new Map<number, { modifiedAt: number; pointCount: number; samples: number[]; rms: number }>();
+  private offlineAudioContextCtor: (new (channelCount: number, length: number, sampleRate: number) => any) | null = null;
   public constructor(
     private readonly database: DatabaseService,
     private readonly settings: SettingsService,
@@ -83,7 +84,7 @@ export class LibraryService {
     this.resetMetadataSuggestionsCache();
     this.waveformPreviewCache.clear();
     
-    const cleanedTempFiles = await this.cleanupTempFiles();
+  await this.cleanupTempFiles();
     const libraryRoot = this.settings.ensureLibraryPath();
     const existing = this.database.listFiles();
   const existingByPath = new Map(existing.map((file) => [file.absolutePath, file] as const));
@@ -344,7 +345,7 @@ export class LibraryService {
   const buffer = await fs.readFile(record.absolutePath);
   const wave = new WaveFile(buffer);
   const sampleBlock = wave.getSamples(false, Float64Array) as Float64Array | Float64Array[];
-  const channels = Array.isArray(sampleBlock) ? sampleBlock : [sampleBlock];
+  const channels = (Array.isArray(sampleBlock) ? sampleBlock : [sampleBlock]) as Float64Array[];
       const firstChannel = channels[0];
 
       if (!firstChannel || firstChannel.length === 0) {
@@ -751,7 +752,9 @@ export class LibraryService {
           startMs,
           endMs: safeEnd,
           label: segment.label?.trim() ?? undefined,
-          metadata: segment.metadata
+          metadata: segment.metadata,
+          fadeInMs: Number.isFinite(segment.fadeInMs) ? Math.max(0, Math.floor(segment.fadeInMs!)) : 0,
+          fadeOutMs: Number.isFinite(segment.fadeOutMs) ? Math.max(0, Math.floor(segment.fadeOutMs!)) : 0
         };
       })
       .filter((segment) => segment.endMs - segment.startMs >= 5)
@@ -780,7 +783,14 @@ export class LibraryService {
         continue;
       }
 
-      const segmentChannels = channels.map((channel) => channel.slice(startSample, endSample));
+  let segmentChannels: Float64Array[] = channels.map((channel) => channel.slice(startSample, endSample));
+
+      const fadeInMs = segment.fadeInMs ?? 0;
+      const fadeOutMs = segment.fadeOutMs ?? 0;
+      if (fadeInMs > 0 || fadeOutMs > 0) {
+        segmentChannels = (await this.applyFadeEnvelopeToSegment(segmentChannels, sampleRate, fadeInMs, fadeOutMs)) as Float64Array[];
+      }
+
       const nextWave = new WaveFile();
       nextWave.fromScratch(channels.length, sampleRate, bitDepthText, segmentChannels.length === 1 ? segmentChannels[0] : segmentChannels);
       (nextWave as WaveFile & { container?: string }).container = container;
@@ -900,6 +910,152 @@ export class LibraryService {
     this.search.rebuildIndex();
 
     return created;
+  }
+
+  /**
+   * Applies the configured fade envelope to the provided channel data. Tries to render using
+   * `standardized-audio-context` for consistency with the editor preview and falls back to
+   * a manual smooth-step implementation if the dependency is unavailable at runtime.
+   */
+  private async applyFadeEnvelopeToSegment(
+    source: Float64Array[],
+    sampleRate: number,
+    fadeInMs: number,
+    fadeOutMs: number
+  ): Promise<Float64Array[]> {
+    if (source.length === 0 || source[0]?.length === 0) {
+      return source.map((channel) => channel.slice());
+    }
+
+    const totalSamples = source[0].length;
+    const fadeInSamples = Math.min(totalSamples, Math.max(0, Math.floor((fadeInMs / 1000) * sampleRate)));
+    const fadeOutSamples = Math.min(totalSamples, Math.max(0, Math.floor((fadeOutMs / 1000) * sampleRate)));
+
+    if (fadeInSamples === 0 && fadeOutSamples === 0) {
+      return source.map((channel) => channel.slice());
+    }
+
+    const applyManual = (): Float64Array[] => {
+      return source.map((channel) => {
+        const copy = channel.slice();
+        const sampleCount = copy.length;
+        const fadeInDenominator = Math.max(1, fadeInSamples - 1);
+        const fadeOutDenominator = Math.max(1, fadeOutSamples - 1);
+        for (let index = 0; index < sampleCount; index += 1) {
+          let gain = 1;
+          if (fadeInSamples > 0 && index < fadeInSamples) {
+            const t = fadeInDenominator > 0 ? index / fadeInDenominator : 0;
+            const eased = this.smoothStep(t);
+            gain = Math.min(gain, eased);
+          }
+          if (fadeOutSamples > 0) {
+            const fromEnd = sampleCount - 1 - index;
+            if (fromEnd < fadeOutSamples) {
+              const t = fadeOutDenominator > 0 ? fromEnd / fadeOutDenominator : 0;
+              const eased = this.smoothStep(t);
+              gain = Math.min(gain, eased);
+            }
+          }
+          copy[index] = copy[index] * gain;
+        }
+        return copy;
+      });
+    };
+
+    try {
+      let OfflineContextCtor = this.offlineAudioContextCtor;
+      if (!OfflineContextCtor) {
+        const audioModule = (await import('standardized-audio-context')) as {
+          OfflineAudioContext?: new (channelCount: number, length: number, sampleRate: number) => any;
+          default?: { OfflineAudioContext?: new (channelCount: number, length: number, sampleRate: number) => any };
+        };
+        const resolvedCtor = audioModule.OfflineAudioContext ?? audioModule.default?.OfflineAudioContext ?? null;
+        if (typeof resolvedCtor !== 'function') {
+          return applyManual();
+        }
+        this.offlineAudioContextCtor = resolvedCtor;
+        OfflineContextCtor = resolvedCtor;
+      }
+
+      const channelCount = source.length;
+      const offlineContext = new OfflineContextCtor(channelCount, totalSamples, sampleRate);
+      const buffer = offlineContext.createBuffer(channelCount, totalSamples, sampleRate);
+      for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+        const channelData = buffer.getChannelData(channelIndex);
+        const sourceChannel = source[channelIndex];
+        for (let sampleIndex = 0; sampleIndex < totalSamples; sampleIndex += 1) {
+          channelData[sampleIndex] = sourceChannel?.[sampleIndex] ?? 0;
+        }
+      }
+
+      const bufferSource = offlineContext.createBufferSource();
+      bufferSource.buffer = buffer;
+      const gainNode = offlineContext.createGain();
+      bufferSource.connect(gainNode);
+      gainNode.connect(offlineContext.destination);
+
+      const totalDurationSeconds = totalSamples / sampleRate;
+      gainNode.gain.setValueAtTime(1, 0);
+
+      if (fadeInSamples > 0) {
+        const fadeInCurve = this.generateFadeCurve(Math.max(fadeInSamples, 2), 'in');
+        gainNode.gain.setValueAtTime(fadeInCurve[0], 0);
+        gainNode.gain.setValueCurveAtTime(fadeInCurve, 0, fadeInSamples / sampleRate);
+        gainNode.gain.setValueAtTime(1, fadeInSamples / sampleRate);
+      }
+
+      if (fadeOutSamples > 0) {
+        const fadeOutCurve = this.generateFadeCurve(Math.max(fadeOutSamples, 2), 'out');
+        const fadeOutStart = Math.max(0, totalDurationSeconds - fadeOutSamples / sampleRate);
+        gainNode.gain.setValueAtTime(1, fadeOutStart);
+        gainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeOutStart, fadeOutSamples / sampleRate);
+        gainNode.gain.setValueAtTime(fadeOutCurve[fadeOutCurve.length - 1], totalDurationSeconds);
+      }
+
+      bufferSource.start(0);
+      const renderedBuffer = await offlineContext.startRendering();
+      const processed: Float64Array[] = [];
+      for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+        const renderedChannel = renderedBuffer.getChannelData(channelIndex);
+        const clone = new Float64Array(renderedChannel.length);
+        clone.set(renderedChannel);
+        processed.push(clone);
+      }
+      return processed;
+    } catch (error) {
+      console.warn('Falling back to manual fade processing', error);
+      return applyManual();
+    }
+  }
+
+  /**
+   * Generates a smooth fade curve using a cubic smooth-step easing function.
+   */
+  private generateFadeCurve(sampleCount: number, direction: 'in' | 'out'): Float32Array {
+    const totalSamples = Math.max(sampleCount, 2);
+    const curve = new Float32Array(totalSamples);
+    const lastIndex = totalSamples - 1;
+    for (let index = 0; index < totalSamples; index += 1) {
+      const t = lastIndex === 0 ? 1 : index / lastIndex;
+      const eased = this.smoothStep(Math.min(Math.max(t, 0), 1));
+      curve[index] = direction === 'in' ? eased : 1 - eased;
+    }
+    if (direction === 'in') {
+      curve[0] = 0;
+      curve[lastIndex] = 1;
+    } else {
+      curve[0] = 1;
+      curve[lastIndex] = 0;
+    }
+    return curve;
+  }
+
+  /**
+   * Computes the cubic smooth-step easing value for the provided normalised progress.
+   */
+  private smoothStep(t: number): number {
+    const clamped = Math.min(Math.max(t, 0), 1);
+    return clamped * clamped * (3 - 2 * clamped);
   }
 
   /**

@@ -64,3 +64,4 @@ test-data/
 *.tmp
 *.temp
 .cache/
+AudioSort.code-workspace
