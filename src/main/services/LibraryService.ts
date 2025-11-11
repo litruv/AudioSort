@@ -215,6 +215,20 @@ export class LibraryService {
   }
 
   /**
+   * Attempts to resolve a file summary by id. Returns null when the record no longer exists.
+   */
+  public getFileById(fileId: number): AudioFileSummary | null {
+    try {
+      return this.database.getFileById(fileId);
+    } catch (error) {
+      if (error instanceof Error) {
+        console.warn(`Failed to resolve file by id ${fileId}:`, error.message);
+      }
+      return null;
+    }
+  }
+
+  /**
    * Returns groups of files that have identical checksums (potential duplicates).
    */
   public listDuplicates(): { checksum: string; files: AudioFileSummary[] }[] {

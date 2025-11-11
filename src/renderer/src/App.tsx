@@ -69,13 +69,46 @@ function App(): JSX.Element {
     [library.files, library.selectedFileId]
   );
 
-  const parentFile = useMemo(() => {
+  const parentFileFromStore = useMemo(() => {
     const parentId = selectedFile?.parentFileId ?? null;
     if (parentId === null) {
       return null;
     }
     return library.files.find((file) => file.id === parentId) ?? null;
   }, [library.files, selectedFile?.parentFileId]);
+
+  const [resolvedParentFile, setResolvedParentFile] = useState<AudioFileSummary | null>(parentFileFromStore);
+
+  useEffect(() => {
+    const parentId = selectedFile?.parentFileId ?? null;
+    if (parentId === null) {
+      setResolvedParentFile(null);
+      return;
+    }
+    if (parentFileFromStore) {
+      setResolvedParentFile(parentFileFromStore);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const fetched = await window.api.getAudioFileById(parentId);
+        if (!cancelled) {
+          setResolvedParentFile(fetched ?? null);
+        }
+      } catch (error) {
+        console.warn('Unable to resolve parent file details', { parentId, error });
+        if (!cancelled) {
+          setResolvedParentFile(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [parentFileFromStore, selectedFile?.parentFileId]);
 
   const selectedFiles = useMemo(
     () => library.files.filter((file) => library.selectedFileIds.has(file.id)),
@@ -307,7 +340,7 @@ function App(): JSX.Element {
                 <>
                   <FileDetailPanel
                     file={selectedFile}
-                    parentFile={parentFile}
+                    parentFile={resolvedParentFile}
                     categories={library.categories}
                     onRename={handleRename}
                     onMove={handleMove}

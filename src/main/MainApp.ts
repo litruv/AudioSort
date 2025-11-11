@@ -225,6 +225,9 @@ export class MainApp {
 
     ipcMain.handle(IPC_CHANNELS.libraryScan, async () => this.requireLibrary().scanLibrary());
     ipcMain.handle(IPC_CHANNELS.libraryList, async () => this.requireLibrary().listFiles());
+    ipcMain.handle(IPC_CHANNELS.libraryGetById, async (_event: IpcMainInvokeEvent, fileId: number) =>
+      this.requireLibrary().getFileById(fileId)
+    );
     ipcMain.handle(IPC_CHANNELS.libraryDuplicates, async () => this.requireLibrary().listDuplicates());
     ipcMain.handle(IPC_CHANNELS.searchQuery, async (_event: IpcMainInvokeEvent, query: string) =>
       this.requireSearch().search(query)

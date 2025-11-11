@@ -5,6 +5,7 @@ export const IPC_CHANNELS = {
   dialogSelectLibrary: 'dialog:select-library',
   libraryScan: 'library:scan',
   libraryList: 'library:list',
+  libraryGetById: 'library:get-by-id',
   libraryDuplicates: 'library:duplicates',
   libraryRename: 'library:rename',
   libraryMove: 'library:move',
@@ -39,6 +40,8 @@ export interface RendererApi {
   rescanLibrary(): Promise<import('./models').LibraryScanSummary>;
   /** Fetches the current list of audio files. */
   listAudioFiles(): Promise<import('./models').AudioFileSummary[]>;
+  /** Retrieves a single audio file summary by id, or null if it cannot be resolved. */
+  getAudioFileById(fileId: number): Promise<import('./models').AudioFileSummary | null>;
   /** Fetches groups of duplicate files based on checksum. */
   listDuplicates(): Promise<{ checksum: string; files: import('./models').AudioFileSummary[] }[]>;
   /** Requests a rename for the target file. */

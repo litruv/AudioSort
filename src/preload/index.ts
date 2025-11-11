@@ -29,6 +29,10 @@ const api: RendererApi = {
   async listAudioFiles(): Promise<AudioFileSummary[]> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryList);
   },
+  /** Retrieves a single audio file summary by id, returning null when the record no longer exists. */
+  async getAudioFileById(fileId: number): Promise<AudioFileSummary | null> {
+    return ipcRenderer.invoke(IPC_CHANNELS.libraryGetById, fileId);
+  },
   async listDuplicates(): Promise<{ checksum: string; files: AudioFileSummary[] }[]> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryDuplicates);
   },

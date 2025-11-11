@@ -369,7 +369,7 @@ export function FileDetailPanel({ file, parentFile, categories, onRename, onMove
               onClick={handleOpenParent}
               title={parentFile ? `Open source file ${parentFile.displayName}` : 'Open source file'}
             >
-              🔗 {parentFile ? parentFile.customName || parentFile.displayName : `File #${file.parentFileId}`}
+              🔗 {parentFile ? parentFile.customName || parentFile.displayName : `Source missing (#${file.parentFileId})`}
             </button>
           ) : null}
         </div>
