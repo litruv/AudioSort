@@ -174,6 +174,95 @@ body {
   color: inherit;
 }
 
+.drive-picker {
+  width: min(28rem, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.drive-picker__header h2 {
+  margin: 0 0 0.35rem 0;
+  font-size: 1.4rem;
+}
+
+.drive-picker__header p {
+  margin: 0;
+  opacity: 0.75;
+  font-size: 0.95rem;
+}
+
+.drive-picker__error {
+  padding: 0.75rem 1rem;
+  border-radius: 0.6rem;
+  background: rgba(220, 97, 97, 0.12);
+  border: 1px solid rgba(220, 97, 97, 0.35);
+  color: #f5d6d6;
+  font-size: 0.9rem;
+}
+
+.drive-picker__body {
+  min-height: 6rem;
+}
+
+.drive-picker__status {
+  margin: 0;
+  opacity: 0.75;
+}
+
+.drive-picker__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.drive-picker__drive {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.drive-picker__drive:hover:not(:disabled),
+.drive-picker__drive:focus-visible {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.drive-picker__drive:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.drive-picker__drive-label {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.drive-picker__drive-hint {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.drive-picker__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
 .status-banner {
   text-align: center;
   padding: 0.25rem 1rem;

@@ -47,16 +47,22 @@ export class MainApp {
 
     this.searchService.rebuildIndex();
     this.registerIpcHandlers();
-    this.createMenu();
+    await this.createMenu();
     this.createWindow();
   }
 
   /**
    * Creates the application menu.
    */
-  private createMenu(): void {
+  private async createMenu(): Promise<void> {
     const isMac = process.platform === 'darwin';
+    const drives = await this.listAvailableDrives();
     
+    const driveSubmenu: Electron.MenuItemConstructorOptions[] = drives.map((drive) => ({
+      label: drive.label,
+      click: () => this.mainWindow?.webContents.send('import-from-drive', drive.path)
+    }));
+
     const template: Electron.MenuItemConstructorOptions[] = [
       ...(isMac ? [{
         label: app.name,
@@ -79,6 +85,16 @@ export class MainApp {
       {
         label: 'File',
         submenu: [
+          {
+            label: 'Import From Folder...',
+            accelerator: isMac ? 'Cmd+Shift+I' : 'Ctrl+Shift+I',
+            click: () => this.mainWindow?.webContents.send('import-from-folder')
+          },
+          {
+            label: 'Import From Drive',
+            submenu: driveSubmenu.length > 0 ? driveSubmenu : [{ label: 'No drives available', enabled: false }]
+          },
+          { type: 'separator' as const },
           {
             label: 'Rescan Library',
             accelerator: isMac ? 'Cmd+R' : 'Ctrl+R',
@@ -132,6 +148,8 @@ export class MainApp {
     ipcMain.removeHandler(IPC_CHANNELS.settingsGet);
     ipcMain.removeHandler(IPC_CHANNELS.settingsSetLibrary);
     ipcMain.removeHandler(IPC_CHANNELS.dialogSelectLibrary);
+    ipcMain.removeHandler(IPC_CHANNELS.dialogSelectImportFolder);
+    ipcMain.removeHandler(IPC_CHANNELS.systemListDrives);
     ipcMain.removeHandler(IPC_CHANNELS.libraryScan);
     ipcMain.removeHandler(IPC_CHANNELS.libraryList);
     ipcMain.removeHandler(IPC_CHANNELS.libraryRename);
@@ -143,6 +161,7 @@ export class MainApp {
   ipcMain.removeHandler(IPC_CHANNELS.libraryUpdateMetadata);
    ipcMain.removeHandler(IPC_CHANNELS.librarySplit);
     ipcMain.removeHandler(IPC_CHANNELS.libraryWaveformPreview);
+    ipcMain.removeHandler(IPC_CHANNELS.libraryImport);
     ipcMain.removeHandler(IPC_CHANNELS.tagsUpdate);
     ipcMain.removeHandler(IPC_CHANNELS.categoriesList);
     ipcMain.removeHandler(IPC_CHANNELS.searchQuery);
@@ -215,13 +234,24 @@ export class MainApp {
     });
 
     ipcMain.handle(IPC_CHANNELS.dialogSelectLibrary, async () => {
-  const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
+      const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
       const targetWindow = this.mainWindow;
       const result = targetWindow
         ? await dialog.showOpenDialog(targetWindow, options)
         : await dialog.showOpenDialog(options);
       return result.canceled ? null : result.filePaths[0] ?? null;
     });
+
+    ipcMain.handle(IPC_CHANNELS.dialogSelectImportFolder, async () => {
+      const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
+      const targetWindow = this.mainWindow;
+      const result = targetWindow
+        ? await dialog.showOpenDialog(targetWindow, options)
+        : await dialog.showOpenDialog(options);
+      return result.canceled ? null : result.filePaths[0] ?? null;
+    });
+
+    ipcMain.handle(IPC_CHANNELS.systemListDrives, async () => this.listAvailableDrives());
 
     ipcMain.handle(IPC_CHANNELS.libraryScan, async () => this.requireLibrary().scanLibrary());
     ipcMain.handle(IPC_CHANNELS.libraryList, async () => this.requireLibrary().listFiles());
@@ -306,6 +336,19 @@ export class MainApp {
       ) =>
         this.requireLibrary().updateFileMetadata(fileId, metadata)
     );
+
+    ipcMain.handle(IPC_CHANNELS.libraryImport, async (_event: IpcMainInvokeEvent, payload: unknown) => {
+      if (!Array.isArray(payload)) {
+        throw new Error('Import request must provide an array of source paths.');
+      }
+      const sources = payload
+        .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+        .filter((entry) => entry.length > 0);
+      if (sources.length === 0) {
+        return { imported: [], skipped: [], failed: [] };
+      }
+      return this.requireLibrary().importExternalSources(sources);
+    });
   }
 
   /**
@@ -358,6 +401,86 @@ export class MainApp {
       return processRef.cwd();
     }
     return app.getAppPath();
+  }
+
+  private async listAvailableDrives(): Promise<Array<{ path: string; label: string }>> {
+    if (process.platform === 'win32') {
+      try {
+        const { exec } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const execAsync = promisify(exec);
+        
+        // Query Windows Management Instrumentation for drive info
+        const { stdout } = await execAsync('wmic logicaldisk get deviceid,drivetype', { 
+          timeout: 5000,
+          windowsHide: true 
+        });
+        
+        const lines = stdout.trim().split('\n').slice(1); // Skip header
+        const drives: Array<{ path: string; type: string }> = [];
+        
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          
+          // Parse "C:            3" format (DeviceID and DriveType)
+          const match = trimmed.match(/^([A-Z]:)\s+(\d+)$/);
+          if (!match) continue;
+          
+          const [, deviceId, driveType] = match;
+          const drivePath = `${deviceId}\\`;
+          
+          // Verify drive is actually accessible before including it
+          try {
+            await fs.promises.access(drivePath);
+          } catch {
+            continue; // Skip if not accessible (unplugged/ejected)
+          }
+          
+          // DriveType: 2=Removable, 3=Local Fixed, 4=Network, 5=CD-ROM, 6=RAM Disk
+          let label = drivePath;
+          if (driveType === '2') {
+            label = `${drivePath} (Removable)`;
+          }
+          
+          drives.push({ path: drivePath, type: label });
+        }
+        
+        return drives.sort((a, b) => a.path.localeCompare(b.path)).map((d) => ({ path: d.path, label: d.type }));
+      } catch (error) {
+        console.warn('Failed to query drive types via wmic, falling back to simple enumeration', error);
+        // Fallback to basic enumeration
+        const drives: { path: string; label: string }[] = [];
+        const probes: Promise<void>[] = [];
+        for (let code = 65; code <= 90; code += 1) {
+          const letter = String.fromCharCode(code);
+          const drivePath = `${letter}:\\`;
+          const probe = fs.promises
+            .access(drivePath)
+            .then(() => {
+              drives.push({ path: drivePath, label: drivePath });
+            })
+            .catch(() => undefined);
+          probes.push(probe);
+        }
+        await Promise.all(probes);
+        return drives.sort((a, b) => a.path.localeCompare(b.path));
+      }
+    }
+
+    if (process.platform === 'darwin') {
+      try {
+        const entries = await fs.promises.readdir('/Volumes', { withFileTypes: true });
+        const volumes = entries
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => ({ path: path.join('/Volumes', entry.name), label: path.join('/Volumes', entry.name) }));
+        return volumes.length > 0 ? volumes : [{ path: '/', label: '/' }];
+      } catch {
+        return [{ path: '/', label: '/' }];
+      }
+    }
+
+    return [{ path: '/', label: '/' }];
   }
 
   private buildSearchBases(): string[] {

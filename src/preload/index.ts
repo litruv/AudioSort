@@ -5,6 +5,7 @@ import type {
   AudioBufferPayload,
   AudioFileSummary,
   CategoryRecord,
+  LibraryImportResult,
   LibraryScanSummary,
   SplitSegmentRequest,
   TagUpdatePayload
@@ -26,8 +27,17 @@ const api: RendererApi = {
   async rescanLibrary(): Promise<LibraryScanSummary> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryScan);
   },
+  async selectImportFolder(): Promise<string | null> {
+    return ipcRenderer.invoke(IPC_CHANNELS.dialogSelectImportFolder);
+  },
+  async listSystemDrives(): Promise<string[]> {
+    return ipcRenderer.invoke(IPC_CHANNELS.systemListDrives);
+  },
   async listAudioFiles(): Promise<AudioFileSummary[]> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryList);
+  },
+  async importExternalSources(paths: string[]): Promise<LibraryImportResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.libraryImport, paths);
   },
   /** Retrieves a single audio file summary by id, returning null when the record no longer exists. */
   async getAudioFileById(fileId: number): Promise<AudioFileSummary | null> {
@@ -87,8 +97,8 @@ const api: RendererApi = {
   ): Promise<void> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryUpdateMetadata, fileId, metadata);
   },
-  onMenuAction(channel: string, callback: () => void): () => void {
-    const listener = () => callback();
+  onMenuAction(channel: string, callback: (payload?: unknown) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, payload?: unknown) => callback(payload);
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
   }

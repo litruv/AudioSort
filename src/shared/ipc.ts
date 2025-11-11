@@ -3,6 +3,8 @@ export const IPC_CHANNELS = {
   settingsGet: 'settings:get',
   settingsSetLibrary: 'settings:set-library',
   dialogSelectLibrary: 'dialog:select-library',
+  dialogSelectImportFolder: 'dialog:select-import-folder',
+  systemListDrives: 'system:list-drives',
   libraryScan: 'library:scan',
   libraryList: 'library:list',
   libraryGetById: 'library:get-by-id',
@@ -19,6 +21,7 @@ export const IPC_CHANNELS = {
   libraryMetadataSuggestions: 'library:metadata-suggestions',
   libraryUpdateMetadata: 'library:update-metadata',
   libraryWaveformPreview: 'library:waveform-preview',
+  libraryImport: 'library:import',
   tagsUpdate: 'tags:update',
   categoriesList: 'categories:list',
   searchQuery: 'search:query'
@@ -38,8 +41,14 @@ export interface RendererApi {
   setLibraryPath(path: string): Promise<import('./models').AppSettings>;
   /** Triggers a manual rescan of the library. */
   rescanLibrary(): Promise<import('./models').LibraryScanSummary>;
+  /** Opens a dialog to pick a folder to import audio from. */
+  selectImportFolder(): Promise<string | null>;
+  /** Lists available system drives for drive-level imports. */
+  listSystemDrives(): Promise<string[]>;
   /** Fetches the current list of audio files. */
   listAudioFiles(): Promise<import('./models').AudioFileSummary[]>;
+  /** Imports external audio files into the library. */
+  importExternalSources(paths: string[]): Promise<import('./models').LibraryImportResult>;
   /** Retrieves a single audio file summary by id, or null if it cannot be resolved. */
   getAudioFileById(fileId: number): Promise<import('./models').AudioFileSummary | null>;
   /** Fetches groups of duplicate files based on checksum. */
@@ -81,7 +90,7 @@ export interface RendererApi {
     metadata: { author?: string | null; copyright?: string | null; rating?: number }
   ): Promise<void>;
   /** Listens for menu actions from the main process. Returns a cleanup function. */
-  onMenuAction(channel: string, callback: () => void): () => void;
+  onMenuAction(channel: string, callback: (payload?: unknown) => void): () => void;
 }
 
 declare global {

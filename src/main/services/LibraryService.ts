@@ -4,7 +4,18 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { parse } from 'csv-parse/sync';
-import { AppSettings, AudioBufferPayload, AudioFileSummary, CategoryRecord, LibraryScanSummary, SplitSegmentRequest, TagUpdatePayload } from '../../shared/models';
+import {
+  AppSettings,
+  AudioBufferPayload,
+  AudioFileSummary,
+  CategoryRecord,
+  ImportFailureEntry,
+  ImportSkipEntry,
+  LibraryImportResult,
+  LibraryScanSummary,
+  SplitSegmentRequest,
+  TagUpdatePayload
+} from '../../shared/models';
 import { DatabaseService, FileRecordInput } from './DatabaseService';
 import { SettingsService } from './SettingsService';
 import { TagService } from './TagService';
@@ -290,6 +301,138 @@ export class LibraryService {
     }
 
     return cleanedCount;
+  }
+
+  /**
+   * Imports external WAV files from the provided sources, copying them into the library while
+   * skipping duplicates based on the audio checksum. Imported files land under `_Imports/<date>`.
+   */
+  public async importExternalSources(sourcePaths: string[]): Promise<LibraryImportResult> {
+    // eslint-disable-next-line no-console -- Log import start for debugging.
+    console.log('Starting import from:', sourcePaths);
+    
+    if (!Array.isArray(sourcePaths) || sourcePaths.length === 0) {
+      return { imported: [], skipped: [], failed: [] };
+    }
+
+    const libraryRoot = this.settings.ensureLibraryPath();
+    const normalisedLibraryRoot = this.normalizeAbsolutePath(libraryRoot);
+    const libraryRootWithSlash = normalisedLibraryRoot.endsWith('/')
+      ? normalisedLibraryRoot
+      : `${normalisedLibraryRoot}/`;
+
+    const existingFiles = this.database.listFiles();
+    const knownChecksums = new Set<string>();
+    const knownPaths = new Set<string>();
+    for (const file of existingFiles) {
+      if (typeof file.checksum === 'string' && file.checksum.length > 0) {
+        knownChecksums.add(file.checksum);
+      }
+      knownPaths.add(this.normalizeAbsolutePath(file.absolutePath));
+    }
+
+    const importFolderRelativeBase = path.join('_Imports', new Date().toISOString().slice(0, 10));
+    const importFolderAbsolute = path.join(libraryRoot, importFolderRelativeBase);
+    await fs.mkdir(importFolderAbsolute, { recursive: true });
+
+    const { files: candidateFiles, failures } = await this.collectImportCandidates(sourcePaths);
+    
+    // eslint-disable-next-line no-console -- Log discovered files for debugging.
+    console.log(`Found ${candidateFiles.length} candidate files, ${failures.length} collection failures`);
+    if (failures.length > 0) {
+      // eslint-disable-next-line no-console -- Log collection failures for debugging.
+      console.log('Collection failures:', failures);
+    }
+
+    const imported: AudioFileSummary[] = [];
+    const skipped: ImportSkipEntry[] = [];
+    const failed: ImportFailureEntry[] = [...failures];
+    const usedNames = new Set<string>();
+    const allowedExtensions = new Set(['.wav', '.wave']);
+
+    const folderRelativeNormalised = this.normalizeRelativePath(
+      path.relative(libraryRoot, importFolderAbsolute)
+    );
+    const folderForJoin =
+      folderRelativeNormalised === '.' || folderRelativeNormalised.length === 0
+        ? ''
+        : folderRelativeNormalised;
+
+    for (const candidate of candidateFiles) {
+      const extension = path.extname(candidate).toLowerCase();
+      if (!allowedExtensions.has(extension)) {
+        // eslint-disable-next-line no-console -- Log skip reason for debugging.
+        console.log(`Skipping ${candidate}: unsupported extension ${extension}`);
+        skipped.push({ path: candidate, reason: 'unsupported' });
+        continue;
+      }
+
+      const normalisedCandidate = this.normalizeAbsolutePath(candidate);
+      if (
+        normalisedCandidate === normalisedLibraryRoot ||
+        normalisedCandidate.startsWith(libraryRootWithSlash)
+      ) {
+        // eslint-disable-next-line no-console -- Log skip reason for debugging.
+        console.log(`Skipping ${candidate}: already inside library`);
+        skipped.push({ path: candidate, reason: 'inside-library' });
+        continue;
+      }
+
+      if (knownPaths.has(normalisedCandidate)) {
+        // eslint-disable-next-line no-console -- Log skip reason for debugging.
+        console.log(`Skipping ${candidate}: duplicate path`);
+        skipped.push({ path: candidate, reason: 'duplicate' });
+        continue;
+      }
+
+      // eslint-disable-next-line no-console -- Log checksum computation for debugging.
+      console.log(`Computing checksum for ${candidate}...`);
+      const checksum = await this.computeFileChecksum(candidate);
+      if (!checksum) {
+        // eslint-disable-next-line no-console -- Log skip reason for debugging.
+        console.log(`Skipping ${candidate}: checksum computation failed`);
+        skipped.push({ path: candidate, reason: 'checksum' });
+        continue;
+      }
+
+      if (knownChecksums.has(checksum)) {
+        // eslint-disable-next-line no-console -- Log skip reason for debugging.
+        console.log(`Skipping ${candidate}: duplicate checksum ${checksum}`);
+        skipped.push({ path: candidate, reason: 'duplicate' });
+        continue;
+      }
+
+      // eslint-disable-next-line no-console -- Log import attempt for debugging.
+      console.log(`Attempting to import ${candidate} with checksum ${checksum}...`);
+      try {
+        const record = await this.copyAndRegisterImportedFile({
+          sourcePath: candidate,
+          checksum,
+          importFolderAbsolute,
+          folderForJoin,
+          libraryRoot,
+          usedNames
+        });
+        imported.push(record);
+        knownChecksums.add(checksum);
+        knownPaths.add(this.normalizeAbsolutePath(record.absolutePath));
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        // eslint-disable-next-line no-console -- Log import failures for debugging.
+        console.error(`Failed to import ${candidate}:`, errorMessage);
+        failed.push({
+          path: candidate,
+          message: errorMessage
+        });
+      }
+    }
+
+    if (imported.length > 0) {
+      this.resetMetadataSuggestionsCache();
+      this.search.rebuildIndex();
+    }
+
+    return { imported, skipped, failed };
   }
 
   /**
@@ -1350,6 +1493,142 @@ export class LibraryService {
 
   private normalizeRelativePath(value: string): string {
     return value.replace(/\\/g, '/');
+  }
+
+  /**
+   * Gathers candidate audio files from the provided sources, handling both folders and individual files.
+   */
+  private async collectImportCandidates(sourcePaths: string[]): Promise<{
+    files: string[];
+    failures: ImportFailureEntry[];
+  }> {
+    const discovered = new Set<string>();
+    const failures: ImportFailureEntry[] = [];
+    const uniqueSources = Array.from(
+      new Set((sourcePaths ?? []).map((entry) => entry?.trim()).filter((entry): entry is string => Boolean(entry)))
+    );
+
+    for (const rawSource of uniqueSources) {
+      const absoluteSource = path.resolve(rawSource);
+      try {
+        const stats = await fs.stat(absoluteSource);
+        if (stats.isDirectory()) {
+          try {
+            const matches = await fg(['**/*.wav', '**/*.wave'], {
+              cwd: absoluteSource,
+              absolute: true,
+              onlyFiles: true,
+              suppressErrors: true,
+              caseSensitiveMatch: false
+            });
+            for (const match of matches) {
+              discovered.add(path.resolve(match));
+            }
+          } catch (error) {
+            failures.push({
+              path: absoluteSource,
+              message: error instanceof Error ? error.message : String(error)
+            });
+          }
+        } else if (stats.isFile()) {
+          discovered.add(absoluteSource);
+        } else {
+          failures.push({ path: absoluteSource, message: 'Unsupported file system entry.' });
+        }
+      } catch (error) {
+        failures.push({
+          path: absoluteSource,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    const files = Array.from(discovered).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    return { files, failures };
+  }
+
+  /**
+   * Copies a single source file into the library and registers it in the database, returning the stored record.
+   */
+  private async copyAndRegisterImportedFile(options: {
+    sourcePath: string;
+    checksum: string;
+    importFolderAbsolute: string;
+    folderForJoin: string;
+    libraryRoot: string;
+    usedNames: Set<string>;
+  }): Promise<AudioFileSummary> {
+    const { sourcePath, checksum, importFolderAbsolute, folderForJoin, libraryRoot, usedNames } = options;
+    const extension = path.extname(sourcePath);
+    const baseName = path.basename(sourcePath, extension);
+    let sanitizedBase = this.organization.sanitizeCustomName(baseName);
+    if (!sanitizedBase) {
+      sanitizedBase = 'Imported';
+    }
+
+    let attempt = 0;
+    let candidateName: string = '';
+    let candidateAbsolutePath: string = '';
+    while (true) {
+      if (attempt === 0) {
+        candidateName = this.normaliseFileName(`${sanitizedBase}.wav`);
+      } else {
+        const suffix = this.organization.formatSequenceNumber(attempt);
+        candidateName = this.normaliseFileName(`${sanitizedBase}_${suffix}.wav`);
+      }
+
+      if (!usedNames.has(candidateName)) {
+        candidateAbsolutePath = path.join(importFolderAbsolute, candidateName);
+        const exists = await this.pathExists(candidateAbsolutePath);
+        if (!exists) {
+          break;
+        }
+      }
+
+      attempt += 1;
+      if (attempt > 9999) {
+        throw new Error('Unable to allocate a unique filename for the imported file.');
+      }
+    }
+
+    usedNames.add(candidateName);
+    this.assertWithinLibrary(libraryRoot, candidateAbsolutePath);
+
+    await fs.copyFile(sourcePath, candidateAbsolutePath);
+
+    try {
+      const stats = await fs.stat(candidateAbsolutePath);
+      const metadata = await this.extractAudioMetadata(candidateAbsolutePath);
+      const relativePath = this.toLibraryRelativePath(folderForJoin, candidateName);
+      const record = this.database.upsertFile({
+        absolutePath: candidateAbsolutePath,
+        relativePath,
+        fileName: candidateName,
+        displayName: path.basename(candidateName, path.extname(candidateName)),
+        modifiedAt: stats.mtimeMs,
+        createdAt: Number.isNaN(stats.birthtimeMs) ? null : stats.birthtimeMs,
+        size: stats.size,
+        durationMs: metadata.durationMs,
+        sampleRate: metadata.sampleRate,
+        bitDepth: metadata.bitDepth,
+        checksum,
+        tags: metadata.tags,
+        categories: metadata.categories
+      });
+
+      try {
+        const embedded = this.tagService.readMetadata(candidateAbsolutePath);
+        this.updateMetadataSuggestionsCache(embedded.author ?? null);
+      } catch (metadataError) {
+        // eslint-disable-next-line no-console -- Import should continue even if metadata read fails.
+        console.warn('Failed to read metadata from imported file', metadataError);
+      }
+
+      return record;
+    } catch (error) {
+      await fs.rm(candidateAbsolutePath, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   /**

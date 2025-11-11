@@ -78,6 +78,35 @@ export interface LibraryScanSummary {
   total: number;
 }
 
+/** Enumerates reasons why an import candidate might be skipped. */
+export type ImportSkipReason = 'duplicate' | 'checksum' | 'unsupported' | 'inside-library';
+
+/** Describes a source entry that was skipped during an import run. */
+export interface ImportSkipEntry {
+  /** Absolute path of the skipped file. */
+  path: string;
+  /** Reason the file did not qualify for import. */
+  reason: ImportSkipReason;
+}
+
+/** Records a failure encountered while processing an import candidate. */
+export interface ImportFailureEntry {
+  /** Absolute path of the problematic file or directory. */
+  path: string;
+  /** Human-readable message explaining the failure. */
+  message: string;
+}
+
+/** Summary returned after importing external audio sources. */
+export interface LibraryImportResult {
+  /** Files successfully copied into the library. */
+  imported: AudioFileSummary[];
+  /** Candidates that were skipped with a known reason. */
+  skipped: ImportSkipEntry[];
+  /** Candidates that failed due to unexpected errors. */
+  failed: ImportFailureEntry[];
+}
+
 /**
  * Shape of persisted application settings.
  */

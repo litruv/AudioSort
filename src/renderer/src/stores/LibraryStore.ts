@@ -2,6 +2,7 @@ import type {
   AppSettings,
   AudioFileSummary,
   CategoryRecord,
+  LibraryImportResult,
   LibraryScanSummary,
   SplitSegmentRequest,
   TagUpdatePayload
@@ -60,8 +61,8 @@ export class LibraryStore extends EventTarget {
       window.api.listCategories(),
       window.api.listAudioFiles()
     ]);
-    const firstFileId = files.at(0)?.id ?? null;
-    const firstFile = files.at(0) ?? null;
+  const firstFileId = files[0]?.id ?? null;
+  const firstFile = files[0] ?? null;
     const nextVersion = this.snapshot.metadataSuggestionsVersion + 1;
     this.snapshot = {
       initialized: true,
@@ -252,7 +253,7 @@ export class LibraryStore extends EventTarget {
       ...this.snapshot,
       files: results,
       searchQuery: query,
-      selectedFileId: results.at(0)?.id ?? null,
+  selectedFileId: results[0]?.id ?? null,
       focusedFile: this.snapshot.focusedFile
     };
     this.refreshVisibleFiles(this.snapshot.selectedFileId ?? null);
@@ -299,13 +300,51 @@ export class LibraryStore extends EventTarget {
     this.snapshot = {
       ...this.snapshot,
       files,
-      selectedFileId: files.at(0)?.id ?? null,
+  selectedFileId: files[0]?.id ?? null,
       lastScan: summary,
       focusedFile: this.snapshot.focusedFile,
       metadataSuggestionsVersion: this.snapshot.metadataSuggestionsVersion + 1
     };
     this.refreshVisibleFiles(this.snapshot.selectedFileId ?? null);
     return summary;
+  }
+
+  /**
+   * Prompts the user to select a folder and imports audio files from it.
+   */
+  public async importFromFolder(): Promise<LibraryImportResult | null> {
+    const folder = await window.api.selectImportFolder();
+    if (!folder) {
+      return null;
+    }
+    return this.executeImport([folder]);
+  }
+
+  /**
+   * Imports from a drive path, refreshing local caches when new files are added.
+   */
+  public async importFromDrive(drivePath: string): Promise<LibraryImportResult> {
+    return this.executeImport([drivePath]);
+  }
+
+  private async executeImport(sources: string[]): Promise<LibraryImportResult> {
+    const trimmed = sources.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+    if (trimmed.length === 0) {
+      return { imported: [], skipped: [], failed: [] };
+    }
+
+    const result = await window.api.importExternalSources(trimmed);
+    if (result.imported.length > 0) {
+      const files = await window.api.listAudioFiles();
+  const preferredId = result.imported[0]?.id ?? this.snapshot.selectedFileId ?? null;
+      this.snapshot = {
+        ...this.snapshot,
+        files,
+        metadataSuggestionsVersion: this.snapshot.metadataSuggestionsVersion + 1
+      };
+      this.refreshVisibleFiles(preferredId ?? undefined);
+    }
+    return result;
   }
 
   /**
@@ -415,7 +454,7 @@ export class LibraryStore extends EventTarget {
       .map((id) => fileLookup.get(id) ?? created.find((record) => record.id === id) ?? null)
       .filter((record): record is AudioFileSummary => record !== null);
 
-    const primaryId = justSplitRecords.at(0)?.id ?? null;
+  const primaryId = justSplitRecords[0]?.id ?? null;
     const nextSelection = new Set<number>(justSplitRecords.map((record) => record.id));
     if (primaryId !== null) {
       nextSelection.add(primaryId);
@@ -430,7 +469,7 @@ export class LibraryStore extends EventTarget {
       justSplitFileIds: justSplitRecords.map((record) => record.id),
       selectedFileId: primaryId,
       selectedFileIds: nextSelection,
-      focusedFile: primaryId !== null ? fileLookup.get(primaryId) ?? justSplitRecords.at(0) ?? null : null
+  focusedFile: primaryId !== null ? fileLookup.get(primaryId) ?? justSplitRecords[0] ?? null : null
     };
     this.emitChange();
     return created;
@@ -446,7 +485,7 @@ export class LibraryStore extends EventTarget {
       ...this.snapshot,
       settings,
       files,
-      selectedFileId: files.at(0)?.id ?? null,
+  selectedFileId: files[0]?.id ?? null,
       categoryFilter: null,
       focusedFile: this.snapshot.focusedFile,
       metadataSuggestionsVersion: this.snapshot.metadataSuggestionsVersion + 1
@@ -542,7 +581,7 @@ export class LibraryStore extends EventTarget {
       }
     }
     if (enforceVisible) {
-      return visible.at(0)?.id ?? null;
+  return visible[0]?.id ?? null;
     }
     return desiredId;
   }

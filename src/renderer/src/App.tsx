@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type JSX } from 'react';
+import { useCallback, useEffect, useMemo, useState, type JSX } from 'react';
 import FileList from './components/FileList';
 import FileDetailPanel from './components/FileDetailPanel';
 import MultiFileEditor from './components/MultiFileEditor';
@@ -10,7 +10,7 @@ import EditModePanel from './components/edit/EditModePanel';
 import { useLibrarySnapshot } from './hooks/useLibrarySnapshot';
 import { loadPlayerFile, usePlayerSnapshot } from './hooks/usePlayerSnapshot';
 import { libraryStore, type CategoryFilterValue } from './stores/LibraryStore';
-import type { AudioFileSummary } from '../../shared/models';
+import type { AudioFileSummary, LibraryImportResult } from '../../shared/models';
 
 type RightPanelTab = 'listen' | 'edit';
 
@@ -25,14 +25,18 @@ function App(): JSX.Element {
   const [showStatusMessage, setShowStatusMessage] = useState(false);
   const [statusFadingOut, setStatusFadingOut] = useState(false);
   const [activeTab, setActiveTab] = useState<RightPanelTab>('listen');
+  const [importMessage, setImportMessage] = useState<string | null>(null);
   
   const statusMessage = useMemo(() => {
+    if (importMessage) {
+      return importMessage;
+    }
     if (!library.lastScan) {
       return null;
     }
     const { added, updated, removed } = library.lastScan;
     return `Scan complete: +${added} updated ${updated} removed ${removed}`;
-  }, [library.lastScan]);
+  }, [importMessage, library.lastScan]);
 
   useEffect(() => {
     if (statusMessage) {
@@ -44,6 +48,7 @@ function App(): JSX.Element {
       const hideTimer = setTimeout(() => {
         setShowStatusMessage(false);
         setStatusFadingOut(false);
+        setImportMessage((current) => (current === statusMessage ? null : current));
       }, 5000);
       return () => {
         clearTimeout(fadeTimer);
@@ -51,18 +56,6 @@ function App(): JSX.Element {
       };
     }
   }, [statusMessage]);
-
-  useEffect(() => {
-    const cleanup1 = window.api.onMenuAction('open-settings', () => setSettingsOpen(true));
-    const cleanup2 = window.api.onMenuAction('rescan-library', handleRescan);
-    const cleanup3 = window.api.onMenuAction('find-duplicates', handleFindDuplicates);
-
-    return () => {
-      cleanup1();
-      cleanup2();
-      cleanup3();
-    };
-  }, []);
 
   const selectedFile = useMemo(
     () => library.files.find((file) => file.id === library.selectedFileId) ?? null,
@@ -155,14 +148,82 @@ function App(): JSX.Element {
     void libraryStore.search(value);
   };
 
-  const handleRescan = async () => {
+  const handleRescan = useCallback(async () => {
     await libraryStore.rescan();
-  };
+  }, []);
 
-  const handleFindDuplicates = async () => {
+  const handleFindDuplicates = useCallback(async () => {
     const duplicates = await window.api.listDuplicates();
     setDuplicateGroups(duplicates);
-  };
+  }, []);
+
+  const summariseImportResult = useCallback((result: LibraryImportResult): string => {
+    const parts: string[] = [`${result.imported.length} added`];
+    if (result.skipped.length > 0) {
+      parts.push(`${result.skipped.length} skipped`);
+    }
+    if (result.failed.length > 0) {
+      parts.push(`${result.failed.length} failed`);
+    }
+    return `Import complete: ${parts.join(', ')}`;
+  }, []);
+
+  const notifyImportSuccess = useCallback((result: LibraryImportResult) => {
+    setImportMessage(summariseImportResult(result));
+  }, [summariseImportResult]);
+
+  const notifyImportFailure = useCallback(() => {
+    setImportMessage('Import failed. Check logs for details.');
+  }, []);
+
+  const handleImportFromFolder = useCallback(async () => {
+    try {
+      const result = await libraryStore.importFromFolder();
+      if (!result) {
+        return;
+      }
+      notifyImportSuccess(result);
+    } catch (error) {
+      console.error('Import failed', error);
+      notifyImportFailure();
+    }
+  }, [notifyImportFailure, notifyImportSuccess]);
+
+  const handleImportFromDrive = useCallback(async (drive: string) => {
+    try {
+      const result = await libraryStore.importFromDrive(drive);
+      notifyImportSuccess(result);
+    } catch (error) {
+      console.error('Import failed', error);
+      notifyImportFailure();
+    }
+  }, [notifyImportFailure, notifyImportSuccess]);
+
+  useEffect(() => {
+    const cleanup1 = window.api.onMenuAction('open-settings', () => setSettingsOpen(true));
+    const cleanup2 = window.api.onMenuAction('rescan-library', () => {
+      void handleRescan();
+    });
+    const cleanup3 = window.api.onMenuAction('find-duplicates', () => {
+      void handleFindDuplicates();
+    });
+    const cleanup4 = window.api.onMenuAction('import-from-folder', () => {
+      void handleImportFromFolder();
+    });
+    const cleanup5 = window.api.onMenuAction('import-from-drive', (drive) => {
+      if (typeof drive === 'string') {
+        void handleImportFromDrive(drive);
+      }
+    });
+
+    return () => {
+      cleanup1();
+      cleanup2();
+      cleanup3();
+      cleanup4();
+      cleanup5();
+    };
+  }, [handleFindDuplicates, handleImportFromFolder, handleImportFromDrive, handleRescan]);
 
   const handleKeepDuplicate = async (fileIdToKeep: number, fileIdsToDelete: number[]) => {
     await window.api.deleteFiles(fileIdsToDelete);
@@ -211,7 +272,7 @@ function App(): JSX.Element {
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
-    }, 100);
+    }, 5000);
   };
 
   const handleUpdateCustomName = async (customName: string | null) => {
