@@ -48,7 +48,7 @@
     "productName": "AudioSort",
     "files": [
       "dist/**/*",
-      "UCS.csv"
+      "data/**/*"
     ],
     "directories": {
       "output": "release"
@@ -63,8 +63,8 @@
     },
     "extraResources": [
       {
-        "from": "UCS.csv",
-        "to": "UCS.csv"
+        "from": "data/UCS.csv",
+        "to": "data/UCS.csv"
       }
     ]
   }

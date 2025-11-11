@@ -41,7 +41,7 @@ export class MainApp {
       this.searchService
     );
 
-    const catalogPath = this.resolveResourcePath('UCS.csv');
+  const catalogPath = this.resolveResourcePath(path.join('data', 'UCS.csv'));
     await this.libraryService.ensureCategoriesLoaded(catalogPath);
     await this.libraryService.scanLibrary();
 

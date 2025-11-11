@@ -129,8 +129,8 @@ AudioSort/
 │   │       └── hooks/       # Custom React hooks
 │   ├── preload/           # Electron preload scripts
 │   └── shared/            # Shared types and IPC definitions
-├── data/                  # User data directory (created at runtime)
-├── UCS.csv               # Universal Category System catalog
+├── data/
+│   └── UCS.csv           # Universal Category System catalog
 └── repoimages/           # Documentation assets
 ```
 
@@ -138,22 +138,12 @@ AudioSort/
 
 ### Scripts
 ```bash
-npm run dev          # Start development server with hot reload
-npm run build        # Build renderer and main process
-npm run lint         # Type-check with TypeScript
-npm run test         # Run test suite
-npm run pack         # Package without installer
-npm run dist         # Create distributable
-npm run dist:win     # Create Windows installer
-```
-
-### Testing
-```bash
-npm test              # Run all tests
-npm run test:database # Database service tests
-npm run test:library  # Library service tests
-npm run test:search   # Search service tests
-npm run test:tag      # Tag service tests
+npm run dev      # Start development server with hot reload
+npm run build    # Build renderer and main process
+npm run lint     # Type-check with TypeScript
+npm run pack     # Package without installer
+npm run dist     # Create distributable
+npm run dist:win # Create Windows installer
 ```
 
 ## Configuration
