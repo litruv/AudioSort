@@ -453,7 +453,7 @@ export class LibraryService {
       path.basename(targetPath),
       path.basename(targetPath, path.extname(targetPath))
     );
-    this.waveformPreviewCache.delete(fileId);
+    this.clearWaveformCache(fileId);
     this.search.rebuildIndex();
     return updated;
   }
@@ -478,7 +478,7 @@ export class LibraryService {
       path.basename(targetPath),
       path.basename(targetPath, path.extname(targetPath))
     );
-    this.waveformPreviewCache.delete(fileId);
+    this.clearWaveformCache(fileId);
     this.search.rebuildIndex();
     return updated;
   }
@@ -501,8 +501,17 @@ export class LibraryService {
    * Generates a lightweight waveform preview suitable for list rendering.
    */
   public async getWaveformPreview(fileId: number, pointCount = 160): Promise<{ samples: number[]; rms: number }> {
+    const startTime = performance.now();
     const record = this.database.getFileById(fileId);
   const effectivePoints = Math.min(Math.max(pointCount ?? 160, 32), 16384);
+    
+    // Check database cache first
+    const dbCache = this.database.getWaveformCache(fileId, effectivePoints);
+    if (dbCache) {
+      return dbCache;
+    }
+    
+    // Check memory cache
     const cacheHit = this.waveformPreviewCache.get(fileId);
     if (cacheHit && cacheHit.modifiedAt === record.modifiedAt && cacheHit.pointCount === effectivePoints) {
       return { samples: cacheHit.samples, rms: cacheHit.rms };
@@ -511,6 +520,15 @@ export class LibraryService {
     try {
   const buffer = await fs.readFile(record.absolutePath);
   const wave = new WaveFile(buffer);
+  
+  // For large files, use optimized sampling instead of processing all samples
+  const fileSize = buffer.length;
+  const useFastSampling = fileSize > 10 * 1024 * 1024; // 10MB threshold
+  
+  if (useFastSampling) {
+    return await this.getWaveformPreviewFast(fileId, record, wave, effectivePoints, buffer, startTime);
+  }
+  
   const sampleBlock = wave.getSamples(false, Float64Array) as Float64Array | Float64Array[];
   const channels = (Array.isArray(sampleBlock) ? sampleBlock : [sampleBlock]) as Float64Array[];
       const firstChannel = channels[0];
@@ -523,6 +541,7 @@ export class LibraryService {
           samples: fallback,
           rms: 0
         });
+        this.database.setWaveformCache(fileId, effectivePoints, fallback, 0);
         return { samples: fallback, rms: 0 };
       }
 
@@ -561,6 +580,11 @@ export class LibraryService {
         samples,
         rms
       });
+      this.database.setWaveformCache(fileId, effectivePoints, samples, rms);
+
+      const totalTime = performance.now() - startTime;
+      const durationSec = record.durationMs ? (record.durationMs / 1000).toFixed(1) : 'unknown';
+      console.log(`Waveform preview for ${record.fileName}: ${totalTime.toFixed(1)}ms (${durationSec}s audio, ${(buffer.length / 1024 / 1024).toFixed(1)}MB)`);
 
       return { samples, rms };
     } catch (error) {
@@ -572,7 +596,191 @@ export class LibraryService {
         samples: fallback,
         rms: 0
       });
+      this.database.setWaveformCache(fileId, effectivePoints, fallback, 0);
       return { samples: fallback, rms: 0 };
+    }
+  }
+
+  /**
+   * Fast waveform preview generation for large files using sparse sampling.
+   * Reads raw audio data directly without extracting all samples.
+   */
+  private async getWaveformPreviewFast(
+    fileId: number,
+    record: AudioFileSummary,
+    wave: WaveFile,
+    effectivePoints: number,
+    buffer: Buffer,
+    startTime: number
+  ): Promise<{ samples: number[]; rms: number }> {
+    // Parse WAV header to find data chunk
+    const fmt = wave.fmt as { numChannels: number; bitsPerSample: number };
+    const numChannels = fmt.numChannels;
+    const bytesPerSample = Math.floor(fmt.bitsPerSample / 8);
+    const bytesPerFrame = numChannels * bytesPerSample;
+    
+    // Find the data chunk in the buffer
+    let dataOffset = 12; // Skip RIFF header
+    let dataSize = 0;
+    
+    while (dataOffset < buffer.length - 8) {
+      const chunkId = buffer.toString('ascii', dataOffset, dataOffset + 4);
+      const chunkSize = buffer.readUInt32LE(dataOffset + 4);
+      
+      if (chunkId === 'data') {
+        dataOffset += 8; // Skip chunk header
+        dataSize = chunkSize;
+        break;
+      }
+      
+      dataOffset += 8 + chunkSize;
+      if (chunkSize % 2 === 1) dataOffset++; // Word-aligned
+    }
+    
+    if (dataSize === 0) {
+      // Fallback if we can't find data chunk
+      const fallback = new Array(effectivePoints).fill(0);
+      this.waveformPreviewCache.set(fileId, {
+        modifiedAt: record.modifiedAt,
+        pointCount: effectivePoints,
+        samples: fallback,
+        rms: 0
+      });
+      return { samples: fallback, rms: 0 };
+    }
+    
+    const totalFrames = Math.floor(dataSize / bytesPerFrame);
+    const framesPerPoint = Math.floor(totalFrames / effectivePoints);
+    
+    // Sample at most 100 frames per point for large files
+    const framesToSamplePerPoint = Math.min(framesPerPoint, 100);
+    const frameStep = Math.max(1, Math.floor(framesPerPoint / framesToSamplePerPoint));
+    
+    const peaks: number[] = [];
+    let sumSquares = 0;
+    let sampleTotal = 0;
+    
+    // Determine max value for normalization based on bit depth
+    const maxValue = Math.pow(2, fmt.bitsPerSample - 1);
+    
+    for (let pointIndex = 0; pointIndex < effectivePoints; pointIndex++) {
+      const startFrame = pointIndex * framesPerPoint;
+      const endFrame = pointIndex === effectivePoints - 1 
+        ? totalFrames 
+        : Math.min(totalFrames, startFrame + framesPerPoint);
+      
+      let blockPeak = 0;
+      
+      for (let frame = startFrame; frame < endFrame; frame += frameStep) {
+        const byteOffset = dataOffset + (frame * bytesPerFrame);
+        
+        // Read samples from all channels at this frame
+        for (let ch = 0; ch < numChannels; ch++) {
+          const sampleOffset = byteOffset + (ch * bytesPerSample);
+          
+          if (sampleOffset + bytesPerSample > buffer.length) break;
+          
+          // Read sample based on bit depth
+          let sampleValue = 0;
+          if (bytesPerSample === 2) {
+            sampleValue = buffer.readInt16LE(sampleOffset);
+          } else if (bytesPerSample === 3) {
+            // 24-bit
+            const byte1 = buffer.readUInt8(sampleOffset);
+            const byte2 = buffer.readUInt8(sampleOffset + 1);
+            const byte3 = buffer.readInt8(sampleOffset + 2);
+            sampleValue = (byte3 << 16) | (byte2 << 8) | byte1;
+          } else if (bytesPerSample === 4) {
+            sampleValue = buffer.readInt32LE(sampleOffset);
+          } else if (bytesPerSample === 1) {
+            sampleValue = buffer.readInt8(sampleOffset) << 8; // Convert 8-bit to 16-bit range
+          }
+          
+          const normalized = sampleValue / maxValue;
+          const clamped = Math.max(-1, Math.min(1, normalized));
+          const magnitude = Math.abs(clamped);
+          
+          if (magnitude > blockPeak) {
+            blockPeak = magnitude;
+          }
+          
+          sumSquares += clamped * clamped;
+          sampleTotal++;
+        }
+      }
+      
+      peaks.push(Math.min(blockPeak, 1));
+    }
+    
+    const samples = this.normaliseWaveformArray(peaks);
+    const rms = sampleTotal > 0 ? Math.sqrt(sumSquares / sampleTotal) : 0;
+    this.waveformPreviewCache.set(fileId, {
+      modifiedAt: record.modifiedAt,
+      pointCount: effectivePoints,
+      samples,
+      rms
+    });
+    this.database.setWaveformCache(fileId, effectivePoints, samples, rms);
+
+    const totalTime = performance.now() - startTime;
+    const durationSec = record.durationMs ? (record.durationMs / 1000).toFixed(1) : 'unknown';
+    console.log(`Waveform preview for ${record.fileName}: ${totalTime.toFixed(1)}ms (${durationSec}s audio, ${(buffer.length / 1024 / 1024).toFixed(1)}MB) [FAST]`);
+
+    return { samples, rms };
+  }
+
+  /**
+   * Returns full-resolution waveform samples for a specific time range.
+   * Used for high-detail editor rendering when zoomed in.
+   */
+  public async getWaveformRange(fileId: number, startMs: number, endMs: number): Promise<{ samples: number[] }> {
+    const record = this.database.getFileById(fileId);
+    
+    try {
+      const buffer = await fs.readFile(record.absolutePath);
+      const wave = new WaveFile(buffer);
+      
+      // Get all samples for the entire file
+      const sampleBlock = wave.getSamples(false, Float64Array) as Float64Array | Float64Array[];
+      const channels = (Array.isArray(sampleBlock) ? sampleBlock : [sampleBlock]) as Float64Array[];
+      const firstChannel = channels[0];
+
+      if (!firstChannel || firstChannel.length === 0 || !record.durationMs || record.durationMs <= 0) {
+        return { samples: [] };
+      }
+
+      const amplitudeScale = Math.max(1, this.resolveWaveformAmplitudeScale(wave));
+      const totalDurationMs = record.durationMs;
+      const samplesPerMs = firstChannel.length / totalDurationMs;
+      
+      // Calculate sample indices for the requested time range
+      const startSample = Math.floor(startMs * samplesPerMs);
+      const endSample = Math.ceil(endMs * samplesPerMs);
+      const clampedStart = Math.max(0, startSample);
+      const clampedEnd = Math.min(firstChannel.length, endSample);
+      
+      // Extract peaks for the range
+      const samples: number[] = [];
+      
+      for (let cursor = clampedStart; cursor < clampedEnd; cursor += 1) {
+        let peak = 0;
+        for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+          const channel = channels[channelIndex];
+          const rawSample = channel?.[cursor] ?? 0;
+          const normalisedSample = rawSample / amplitudeScale;
+          const clampedSample = Math.max(-1, Math.min(1, normalisedSample));
+          const magnitude = Math.abs(clampedSample);
+          if (magnitude > peak) {
+            peak = magnitude;
+          }
+        }
+        samples.push(Math.min(peak, 1));
+      }
+
+      return { samples: this.normaliseWaveformArray(samples) };
+    } catch (error) {
+      console.warn('Failed to generate waveform range', { fileId, startMs, endMs, error });
+      return { samples: [] };
     }
   }
 
@@ -581,7 +789,7 @@ export class LibraryService {
    */
   public async updateTagging(payload: TagUpdatePayload): Promise<AudioFileSummary> {
     const updated = this.tagService.applyTagging(payload.fileId, payload.tags, payload.categories);
-    this.waveformPreviewCache.delete(payload.fileId);
+    this.clearWaveformCache(payload.fileId);
 
     if (updated.categories.length > 0) {
       const metadataSnapshot = this.tagService.readMetadata(updated.absolutePath);
@@ -731,7 +939,7 @@ export class LibraryService {
       }
 
       this.resetMetadataSuggestionsCache();
-      this.waveformPreviewCache.delete(fileId);
+      this.clearWaveformCache(fileId);
       this.search.rebuildIndex();
       return updatedRecord;
     }
@@ -827,7 +1035,7 @@ export class LibraryService {
     }
 
     this.resetMetadataSuggestionsCache();
-    this.waveformPreviewCache.delete(fileId);
+    this.clearWaveformCache(fileId);
     this.search.rebuildIndex();
     return updated;
   }
@@ -844,7 +1052,7 @@ export class LibraryService {
         console.error(`Failed to delete file ${record.absolutePath}:`, error);
       }
       this.database.deleteFile(fileId);
-      this.waveformPreviewCache.delete(fileId);
+      this.clearWaveformCache(fileId);
     }
     this.resetMetadataSuggestionsCache();
     this.search.rebuildIndex();
@@ -1068,11 +1276,11 @@ export class LibraryService {
         this.updateMetadataSuggestionsCache(resolvedAuthor);
       }
 
-      this.waveformPreviewCache.delete(updatedRecord.id);
+      this.clearWaveformCache(updatedRecord.id);
       created.push(updatedRecord);
     }
 
-    this.waveformPreviewCache.delete(record.id);
+    this.clearWaveformCache(record.id);
     this.resetMetadataSuggestionsCache();
     this.search.rebuildIndex();
 
@@ -1281,7 +1489,7 @@ export class LibraryService {
       this.updateMetadataSuggestionsCache(mergedMetadata.author);
     }
 
-    this.waveformPreviewCache.delete(fileId);
+    this.clearWaveformCache(fileId);
     this.resetMetadataSuggestionsCache();
   }
 
@@ -1655,6 +1863,14 @@ export class LibraryService {
   }
 
   /**
+   * Helper to clear both memory and database waveform cache.
+   */
+  private clearWaveformCache(fileId: number): void {
+    this.waveformPreviewCache.delete(fileId);
+    this.database.clearWaveformCache(fileId);
+  }
+
+  /**
    * Extracts metadata from the WAV container, falling back to defaults when parsing fails.
    */
   private async extractAudioMetadata(filePath: string): Promise<{
@@ -1834,23 +2050,30 @@ export class LibraryService {
 
   /**
    * Computes checksum from audio data only, excluding metadata chunks for stability.
+   * Uses streaming approach to handle large files efficiently.
    */
   private async computeFileChecksum(filePath: string): Promise<string | null> {
     try {
+      const stats = await fs.stat(filePath);
+      const fileSize = stats.size;
+      
+      // For files larger than 100MB, use chunked streaming to avoid memory issues
+      if (fileSize > 100 * 1024 * 1024) {
+        return await this.computeFileChecksumStreaming(filePath);
+      }
+      
+      // For smaller files, use the existing fast method
       const buffer = await fs.readFile(filePath);
       const wave = new WaveFile(buffer);
       
-      // Hash only the raw audio samples, not metadata or other chunks
       const hash = createHash('md5');
       const samples = wave.getSamples();
       
       if (Array.isArray(samples)) {
-        // Multi-channel: hash each channel
         for (const channel of samples) {
           hash.update(Buffer.from(channel.buffer));
         }
       } else {
-        // Single channel
         hash.update(Buffer.from(samples.buffer));
       }
       
@@ -1863,6 +2086,74 @@ export class LibraryService {
       }
       return null;
     }
+  }
+
+  /**
+   * Computes checksum using streaming for large files.
+   * Reads WAV header to locate data chunk, then streams only the audio data.
+   */
+  private async computeFileChecksumStreaming(filePath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = createHash('md5');
+      const stream = createReadStream(filePath, { highWaterMark: 64 * 1024 }); // 64KB chunks
+      
+      let headerProcessed = false;
+      let dataChunkStart = 0;
+      let dataChunkSize = 0;
+      let bytesRead = 0;
+      let buffer = Buffer.alloc(0);
+
+      stream.on('data', (chunk: string | Buffer) => {
+        const bufferChunk = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+        buffer = Buffer.concat([buffer, bufferChunk]);
+        bytesRead += bufferChunk.length;
+
+        if (!headerProcessed && buffer.length >= 44) {
+          // Parse minimal WAV header to find data chunk
+          // RIFF header: "RIFF" (4) + fileSize (4) + "WAVE" (4) = 12 bytes
+          // fmt chunk: "fmt " (4) + size (4) + format data (usually 16) = 24+ bytes
+          // data chunk: "data" (4) + size (4) + audio data
+          
+          let offset = 12; // Skip RIFF header
+          while (offset + 8 <= buffer.length) {
+            const chunkId = buffer.toString('ascii', offset, offset + 4);
+            const chunkSize = buffer.readUInt32LE(offset + 4);
+            
+            if (chunkId === 'data') {
+              dataChunkStart = offset + 8;
+              dataChunkSize = chunkSize;
+              headerProcessed = true;
+              
+              // Hash any data chunk content we've already read
+              const availableData = buffer.length - dataChunkStart;
+              if (availableData > 0) {
+                const dataToHash = buffer.subarray(dataChunkStart, Math.min(buffer.length, dataChunkStart + dataChunkSize));
+                hash.update(dataToHash);
+              }
+              
+              // Clear buffer to free memory
+              buffer = Buffer.alloc(0);
+              break;
+            }
+            
+            offset += 8 + chunkSize;
+            if (chunkSize % 2 === 1) offset++; // WAV chunks are word-aligned
+          }
+        } else if (headerProcessed) {
+          // We're in the data chunk, hash everything
+          hash.update(bufferChunk);
+          buffer = Buffer.alloc(0); // Clear buffer to free memory
+        }
+      });
+
+      stream.on('end', () => {
+        resolve(hash.digest('hex'));
+      });
+
+      stream.on('error', (error) => {
+        reject(error);
+      });
+    });
   }
 
   /**

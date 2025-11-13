@@ -64,7 +64,7 @@ export interface AudioPlayerProps {
 /**
  * Seamless audio player that integrates smoothly with the interface.
  */
-export function AudioPlayer({ snapshot }: AudioPlayerProps): JSX.Element {
+export function AudioPlayer({ snapshot }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);

@@ -21,6 +21,7 @@ export const IPC_CHANNELS = {
   libraryMetadataSuggestions: 'library:metadata-suggestions',
   libraryUpdateMetadata: 'library:update-metadata',
   libraryWaveformPreview: 'library:waveform-preview',
+  libraryWaveformRange: 'library:waveform-range',
   libraryImport: 'library:import',
   tagsUpdate: 'tags:update',
   categoriesList: 'categories:list',
@@ -74,6 +75,8 @@ export interface RendererApi {
   getAudioBuffer(fileId: number): Promise<import('./models').AudioBufferPayload>;
   /** Returns a lightweight waveform preview for rendering list backgrounds. */
   getWaveformPreview(fileId: number, pointCount?: number): Promise<{ samples: number[]; rms: number }>;
+  /** Returns full-resolution waveform samples for a specific time range (for zoomed editor). */
+  getWaveformRange(fileId: number, startMs: number, endMs: number): Promise<{ samples: number[] }>;
   /** Updates UCS categories for a file (free-form tags are preserved unless explicitly provided). */
   updateTagging(payload: import('./models').TagUpdatePayload): Promise<import('./models').AudioFileSummary>;
   /** Returns the catalog of UCS categories. */

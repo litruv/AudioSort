@@ -76,6 +76,9 @@ const api: RendererApi = {
   async getWaveformPreview(fileId: number, pointCount = 160): Promise<{ samples: number[]; rms: number }> {
     return ipcRenderer.invoke(IPC_CHANNELS.libraryWaveformPreview, fileId, pointCount);
   },
+  async getWaveformRange(fileId: number, startMs: number, endMs: number): Promise<{ samples: number[] }> {
+    return ipcRenderer.invoke(IPC_CHANNELS.libraryWaveformRange, fileId, startMs, endMs);
+  },
   async updateTagging(payload: TagUpdatePayload): Promise<AudioFileSummary> {
     return ipcRenderer.invoke(IPC_CHANNELS.tagsUpdate, payload);
   },

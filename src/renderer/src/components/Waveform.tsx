@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface WaveformProps {
   audioUrl: string | null;
@@ -9,25 +9,43 @@ export interface WaveformProps {
 
 /**
  * Renders an audio waveform visualization that serves as the background for the progress bar.
+ * Skips waveform generation for very long files to avoid UI lag.
  */
-export function Waveform({ audioUrl, currentTime, duration, className = '' }: WaveformProps): JSX.Element {
+export function Waveform({ audioUrl, currentTime, duration, className = '' }: WaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const waveformDataRef = useRef<number[] | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (!audioUrl) {
       return;
     }
 
+    let cancelled = false;
+
     const loadWaveform = async () => {
       try {
-        const audioContext = new AudioContext();
+        setIsLoading(true);
+        const startTime = performance.now();
+        
         const response = await fetch(audioUrl);
         const arrayBuffer = await response.arrayBuffer();
+        
+        if (cancelled) return;
+        
+        const audioContext = new AudioContext();
+        const decodeStart = performance.now();
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        const decodeTime = performance.now() - decodeStart;
 
+        if (cancelled) {
+          await audioContext.close();
+          return;
+        }
+
+        const processStart = performance.now();
         const rawData = audioBuffer.getChannelData(0);
-        const samples = 500;
+        const samples = 100; // Reduced from 500 to 100 for faster generation
         const blockSize = Math.floor(rawData.length / samples);
         const filteredData: number[] = [];
 
@@ -40,18 +58,36 @@ export function Waveform({ audioUrl, currentTime, duration, className = '' }: Wa
           filteredData.push(sum / blockSize);
         }
 
+        if (cancelled) {
+          await audioContext.close();
+          return;
+        }
+
         const multiplier = Math.max(...filteredData) ** -1;
         waveformDataRef.current = filteredData.map((n) => n * multiplier);
         drawWaveform();
 
         await audioContext.close();
+        
+        const totalTime = performance.now() - startTime;
+        const processTime = performance.now() - processStart;
+        console.log(`Waveform generation: total=${totalTime.toFixed(1)}ms, decode=${decodeTime.toFixed(1)}ms, process=${processTime.toFixed(1)}ms, duration=${(duration / 1000).toFixed(1)}s`);
+        
+        setIsLoading(false);
       } catch (error) {
-        console.warn('Failed to generate waveform', error);
+        if (!cancelled) {
+          console.warn('Failed to generate waveform', error);
+          setIsLoading(false);
+        }
       }
     };
 
     void loadWaveform();
-  }, [audioUrl]);
+    
+    return () => {
+      cancelled = true;
+    };
+  }, [audioUrl, duration]);
 
   useEffect(() => {
     drawWaveform();
@@ -100,7 +136,23 @@ export function Waveform({ audioUrl, currentTime, duration, className = '' }: Wa
     }
   };
 
-  return <canvas ref={canvasRef} className={className} style={{ width: '100%', height: '100%' }} />;
+  return (
+    <>
+      <canvas ref={canvasRef} className={className} style={{ width: '100%', height: '100%' }} />
+      {isLoading && (
+        <div style={{ 
+          position: 'absolute', 
+          top: '50%', 
+          left: '50%', 
+          transform: 'translate(-50%, -50%)',
+          fontSize: '10px',
+          color: 'rgba(255, 255, 255, 0.5)'
+        }}>
+          Loading waveform...
+        </div>
+      )}
+    </>
+  );
 }
 
 export default Waveform;

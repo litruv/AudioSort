@@ -411,6 +411,51 @@ export class DatabaseService {
   }
 
   /**
+   * Gets cached waveform data for a file.
+   */
+  public getWaveformCache(fileId: number, pointCount: number): { samples: number[]; rms: number } | null {
+    const connection = this.requireDb();
+    const row = connection
+      .prepare('SELECT waveform_cache FROM files WHERE id = ?')
+      .get(fileId) as { waveform_cache: string | null } | undefined;
+    
+    if (!row || !row.waveform_cache) {
+      return null;
+    }
+    
+    try {
+      const parsed = JSON.parse(row.waveform_cache) as { pointCount: number; samples: number[]; rms: number };
+      if (parsed.pointCount === pointCount) {
+        return { samples: parsed.samples, rms: parsed.rms };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Sets cached waveform data for a file.
+   */
+  public setWaveformCache(fileId: number, pointCount: number, samples: number[], rms: number): void {
+    const connection = this.requireDb();
+    const cacheData = JSON.stringify({ pointCount, samples, rms });
+    connection
+      .prepare('UPDATE files SET waveform_cache = ? WHERE id = ?')
+      .run(cacheData, fileId);
+  }
+
+  /**
+   * Clears waveform cache for a specific file.
+   */
+  public clearWaveformCache(fileId: number): void {
+    const connection = this.requireDb();
+    connection
+      .prepare('UPDATE files SET waveform_cache = NULL WHERE id = ?')
+      .run(fileId);
+  }
+
+  /**
    * Maps a raw database row to the strongly typed summary shape.
    */
   private mapFileRow(row: DbRow): AudioFileSummary {
@@ -500,6 +545,7 @@ export class DatabaseService {
     this.addColumnIfMissing(connection, 'files', 'checksum', 'TEXT');
     this.addColumnIfMissing(connection, 'files', 'custom_name', 'TEXT');
   this.addColumnIfMissing(connection, 'files', 'parent_file_id', 'INTEGER');
+    this.addColumnIfMissing(connection, 'files', 'waveform_cache', 'TEXT');
 
     // Create checksum index after ensuring column exists
     connection.exec('CREATE INDEX IF NOT EXISTS idx_files_checksum ON files(checksum)');

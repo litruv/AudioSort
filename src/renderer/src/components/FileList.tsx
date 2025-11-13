@@ -14,9 +14,10 @@ export interface FileListProps {
 /**
  * Vertical list of WAV files with highlighting for the active selection.
  */
-export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, searchValue, onSearchChange }: FileListProps): JSX.Element {
+export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, searchValue, onSearchChange }: FileListProps) {
   const buttonRefs = useRef(new Map<number, HTMLButtonElement>());
   const waveformCacheRef = useRef<Record<number, WaveformVisual>>({});
+  const waveformLoadedRef = useRef<Set<number>>(new Set());
   const [, forceWaveformUpdate] = useReducer((value: number) => value + 1, 0);
   const dragGhostRef = useRef<HTMLElement | null>(null);
   const dragRotation = useRef<number>(0);
@@ -57,34 +58,63 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
     }
 
     let cancelled = false;
-    const loadPreviews = async () => {
-      for (const file of files) {
-        if (waveformCacheRef.current[file.id]) {
-          continue;
-        }
-        try {
-          const preview = await window.api.getWaveformPreview(file.id, WAVEFORM_POINT_COUNT);
-          if (cancelled) {
-            return;
+    const loadingSet = new Set<number>();
+    
+    // Create intersection observer to load waveforms only for visible items
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const button = entry.target as HTMLElement;
+            const fileId = Number.parseInt(button.dataset.fileId ?? '0', 10);
+            
+            if (!fileId || waveformCacheRef.current[fileId] || loadingSet.has(fileId)) {
+              continue;
+            }
+            
+            const file = files.find((f) => f.id === fileId);
+            if (!file) continue;
+            
+            loadingSet.add(fileId);
+            
+            void (async () => {
+              try {
+                const preview = await window.api.getWaveformPreview(fileId, WAVEFORM_POINT_COUNT);
+                if (cancelled) return;
+                
+                const seed = file.checksum ?? file.absolutePath;
+                waveformCacheRef.current[fileId] = buildWaveformVisual(seed, preview.samples, preview.rms);
+                waveformLoadedRef.current.add(fileId);
+                forceWaveformUpdate();
+              } catch (error) {
+                if (cancelled) return;
+                console.error(`Failed to load waveform preview for file ${fileId} (${file.fileName}):`, error);
+                const seed = file.checksum ?? file.absolutePath;
+                waveformCacheRef.current[fileId] = buildWaveformVisual(seed, null, null);
+                waveformLoadedRef.current.add(fileId);
+                forceWaveformUpdate();
+              } finally {
+                loadingSet.delete(fileId);
+              }
+            })();
           }
-          const seed = file.checksum ?? file.absolutePath;
-          waveformCacheRef.current[file.id] = buildWaveformVisual(seed, preview.samples, preview.rms);
-          forceWaveformUpdate();
-        } catch (error) {
-          if (cancelled) {
-            return;
-          }
-          console.error(`Failed to load waveform preview for file ${file.id} (${file.fileName}):`, error);
-          const seed = file.checksum ?? file.absolutePath;
-          waveformCacheRef.current[file.id] = buildWaveformVisual(seed, null, null);
-          forceWaveformUpdate();
         }
+      },
+      {
+        root: null,
+        rootMargin: '200px', // Load waveforms 200px before they come into view
+        threshold: 0
       }
-    };
+    );
 
-    void loadPreviews();
+    // Observe all file buttons
+    for (const button of buttonRefs.current.values()) {
+      observer.observe(button);
+    }
+
     return () => {
       cancelled = true;
+      observer.disconnect();
     };
   }, [files]);
 
@@ -138,7 +168,8 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
         const primaryLabel = customLabel && customLabel.length > 0 ? customLabel : file.displayName;
         const seed = file.checksum ?? file.absolutePath;
         const gradientId = `waveGradient-${file.id}`;
-  const wave = waveformCacheRef.current[file.id] ?? buildWaveformVisual(seed, null, null);
+        const wave = waveformCacheRef.current[file.id] ?? buildWaveformVisual(seed, null, null);
+        const hasLoadedWaveform = waveformLoadedRef.current.has(file.id);
         return (
           <button
             key={file.id}
@@ -288,6 +319,12 @@ export function FileList({ files, selectedId, selectedIds, onSelect, onPlay, sea
               viewBox={`0 0 ${WAVEFORM_WIDTH} ${WAVEFORM_HEIGHT}`}
               preserveAspectRatio="none"
               aria-hidden="true"
+              style={{
+                transform: hasLoadedWaveform ? 'scaleY(1)' : 'scaleY(0)',
+                transformOrigin: 'center',
+                transition: 'transform 0.75s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                opacity: hasLoadedWaveform ? 1 : 0
+              }}
             >
               <defs>
                 <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">

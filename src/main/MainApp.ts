@@ -161,6 +161,7 @@ export class MainApp {
   ipcMain.removeHandler(IPC_CHANNELS.libraryUpdateMetadata);
    ipcMain.removeHandler(IPC_CHANNELS.librarySplit);
     ipcMain.removeHandler(IPC_CHANNELS.libraryWaveformPreview);
+    ipcMain.removeHandler(IPC_CHANNELS.libraryWaveformRange);
     ipcMain.removeHandler(IPC_CHANNELS.libraryImport);
     ipcMain.removeHandler(IPC_CHANNELS.tagsUpdate);
     ipcMain.removeHandler(IPC_CHANNELS.categoriesList);
@@ -311,6 +312,12 @@ export class MainApp {
       IPC_CHANNELS.libraryWaveformPreview,
       async (_event: IpcMainInvokeEvent, fileId: number, pointCount: number | undefined) =>
         this.requireLibrary().getWaveformPreview(fileId, pointCount)
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.libraryWaveformRange,
+      async (_event: IpcMainInvokeEvent, fileId: number, startMs: number, endMs: number) =>
+        this.requireLibrary().getWaveformRange(fileId, startMs, endMs)
     );
 
     ipcMain.handle(IPC_CHANNELS.tagsUpdate, async (_event: IpcMainInvokeEvent, payload: TagUpdatePayload) =>
